@@ -1,0 +1,321 @@
+{
+  description = "Reproducible Rust cross-build for repro_build";
+
+  inputs = {
+    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
+    flake-utils.url  = "github:numtide/flake-utils";
+  };
+
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
+    flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" ] (system:
+      let
+        overlays = [ rust-overlay.overlays.default ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        
+        # Define pkgsCross instances for cross-compilation
+        pkgsCrossAarch64 = pkgs.pkgsCross.aarch64-multiplatform;
+        pkgsCrossWindows = pkgs.pkgsCross.mingwW64;
+        
+        # Static Windows cross-compilation 
+        pkgsCrossWindowsStatic = import nixpkgs {
+          inherit system overlays;
+          crossSystem = {
+            config = "x86_64-w64-mingw32";
+            libc = "msvcrt";
+            platform = {
+              useAndroidPrebuilt = false;
+            };
+          };
+        };
+        
+        # MSVC cross-compilation - note: this is experimental and may not work perfectly
+        pkgsCrossWindowsMSVC = import nixpkgs {
+          inherit system overlays;
+          crossSystem = {
+            config = "x86_64-w64-mingw32";
+            libc = "msvcrt";
+            platform = {
+              useAndroidPrebuilt = false;
+            };
+            # This is a hacky attempt to use clang with MSVC-compatible output
+            useLLVM = true;
+          };
+        };
+        
+        # Static build using pkgsStatic (with musl for easier static linking)
+        pkgsStatic = import nixpkgs { 
+          inherit system overlays; 
+          crossSystem = {
+            config = "x86_64-unknown-linux-musl";
+          };
+        };
+        
+        pkgsAarch64Static = import nixpkgs {
+          inherit system overlays;
+          crossSystem = {
+            config = "aarch64-unknown-linux-musl";
+          };
+        };
+        
+        # Helper function to build for a specific target
+        buildFor = { targetSystem, targetTriple, needsWine ? false, staticBuild ? false, useMSVC ? false }:
+          let
+            # Choose the appropriate package set based on target and static/dynamic
+            targetPkgs = if useMSVC then pkgsCrossWindowsMSVC
+                         else if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then pkgsStatic
+                         else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then pkgsAarch64Static
+                         else if staticBuild && targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindowsStatic
+                         else if targetTriple == "x86_64-unknown-linux-gnu" then pkgs
+                         else if targetTriple == "aarch64-unknown-linux-gnu" then pkgsCrossAarch64
+                         else if targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindows
+                         else pkgs;
+            
+            # Adjust target triple for musl when building statically
+            actualTriple = if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then "x86_64-unknown-linux-musl"
+                           else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then "aarch64-unknown-linux-musl"
+                           else if useMSVC then "x86_64-pc-windows-msvc"
+                           else targetTriple;
+                         
+            rustBin = if useMSVC then
+                        pkgs.rust-bin.stable.latest.default.override { targets = [ "x86_64-pc-windows-msvc" ]; }
+                      else if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then
+                        rust-overlay.lib.mkRustBin {} targetPkgs
+                        .stable.latest.default.override { targets = [ actualTriple ]; }
+                      else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then
+                        rust-overlay.lib.mkRustBin {} targetPkgs
+                        .stable.latest.default.override { targets = [ actualTriple ]; }
+                      else if staticBuild && targetTriple == "x86_64-pc-windows-gnu" then
+                        rust-overlay.lib.mkRustBin {} pkgsCrossWindowsStatic.buildPackages
+                        .stable.latest.default.override { targets = [ targetTriple ]; }
+                      else if targetTriple == "x86_64-unknown-linux-gnu" then
+                        pkgs.rust-bin.stable.latest.default
+                      else if targetTriple == "aarch64-unknown-linux-gnu" then
+                        rust-overlay.lib.mkRustBin {} pkgsCrossAarch64.buildPackages
+                        .stable.latest.default.override { targets = [ targetTriple ]; }
+                      else if targetTriple == "x86_64-pc-windows-gnu" then
+                        rust-overlay.lib.mkRustBin {} pkgsCrossWindows.buildPackages
+                        .stable.latest.default.override { targets = [ targetTriple ]; }
+                      else
+                        pkgs.rust-bin.stable.latest.default.override { targets = [ targetTriple ]; };
+                         
+            # Static linking configuration for openssl and other libraries
+            opensslStatic = if staticBuild then targetPkgs.openssl.override {
+              static = true;
+            } else pkgs.openssl;
+            
+            # Windows-specific libraries
+            windowsLibs = if targetTriple == "x86_64-pc-windows-gnu" || useMSVC then 
+              with (if staticBuild && targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindowsStatic 
+                   else if useMSVC then pkgsCrossWindowsMSVC
+                   else pkgsCrossWindows); [
+                windows.pthreads
+                openssl
+              ]
+            else [];
+            
+            buildInputs = if staticBuild && targetTriple != "x86_64-pc-windows-gnu" && !useMSVC then [ opensslStatic ]
+                         else if targetTriple == "x86_64-pc-windows-gnu" || useMSVC then windowsLibs
+                         else [ pkgs.openssl ];
+                         
+            nativeBuildInputs = with pkgs; [ pkg-config ]
+              ++ (if needsWine then [ pkgs.wine ] else [])
+              ++ (if targetTriple == "aarch64-unknown-linux-gnu" then [ pkgs.qemu ] else []);
+              
+            # Static linking flags
+            staticFlags = if staticBuild && targetTriple != "x86_64-pc-windows-gnu" && !useMSVC then "-C target-feature=+crt-static"
+                         else if staticBuild && targetTriple == "x86_64-pc-windows-gnu" then "-C target-feature=+crt-static -C linker=x86_64-w64-mingw32-gcc -C link-args=-static"
+                         else if useMSVC && staticBuild then "-C target-feature=+crt-static -C linker=lld-link -C link-args=/INCREMENTAL:NO /OPT:REF /MACHINE:X64"
+                         else "";
+            
+            extraEnv = if targetTriple == "aarch64-unknown-linux-gnu" then {
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${pkgsCrossAarch64.stdenv.cc.targetPrefix}cc";
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER = "qemu-aarch64";
+              RUSTFLAGS = staticFlags;
+            } else if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then {
+              CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${targetPkgs.stdenv.cc.targetPrefix}cc";
+              RUSTFLAGS = staticFlags;
+            } else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then {
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER = "${targetPkgs.stdenv.cc.targetPrefix}cc";
+              CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_RUNNER = "qemu-aarch64";
+              RUSTFLAGS = staticFlags;
+            } else if targetTriple == "x86_64-pc-windows-gnu" then {
+              CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${(if staticBuild then pkgsCrossWindowsStatic else pkgsCrossWindows).stdenv.cc.targetPrefix}gcc";
+              RUSTFLAGS = staticFlags;
+            } else if useMSVC then {
+              CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "lld-link";
+              RUSTFLAGS = staticFlags;
+            } else {
+              RUSTFLAGS = staticFlags;
+            };
+          in
+          targetPkgs.rustPlatform.buildRustPackage rec {
+            pname    = "repro_build";
+            version  = "0.1.0";
+            src      = ../.;
+            cargoLock = { lockFile = ../Cargo.lock; };
+            
+            # Ensure building in release mode
+            release = true;
+            
+            # Target-specific configuration
+            CARGO_BUILD_TARGET = actualTriple;
+            
+            inherit buildInputs nativeBuildInputs;
+            
+            # Apply cargo release settings from Cargo.toml - using strings as required
+            CARGO_PROFILE_RELEASE_LTO = "true";
+            CARGO_PROFILE_RELEASE_OPT_LEVEL = "s";
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "1";
+            CARGO_PROFILE_RELEASE_PANIC = "abort";
+            CARGO_PROFILE_RELEASE_STRIP = "true";
+            
+            # Apply static linking flags
+            inherit (extraEnv) RUSTFLAGS;
+            
+            # Merge in extra environment variables
+            passthru = extraEnv;
+            
+            # Windows-specific settings
+            postFixup = if needsWine then ''
+              # Add .exe extension for Windows binaries if missing
+              if [ -f $out/bin/repro_build ] && [ ! -f $out/bin/repro_build.exe ]; then
+                cp $out/bin/repro_build $out/bin/repro_build.exe
+              fi
+            '' else "";
+          };
+      in {
+        # Default package for native build
+        packages.default = buildFor {
+          targetSystem = system;
+          targetTriple = if system == "x86_64-linux" then "x86_64-unknown-linux-gnu" 
+                         else if system == "aarch64-linux" then "aarch64-unknown-linux-gnu"
+                         else "x86_64-unknown-linux-gnu";
+        };
+        
+        # Cross-compilation packages - normal (dynamically linked)
+        packages.linux-x86_64 = buildFor {
+          targetSystem = "x86_64-linux";
+          targetTriple = "x86_64-unknown-linux-gnu";
+        };
+        
+        packages.linux-aarch64 = buildFor {
+          targetSystem = "aarch64-linux";
+          targetTriple = "aarch64-unknown-linux-gnu";
+        };
+        
+        packages.windows-x86_64-gnu = buildFor {
+          targetSystem = "x86_64-windows";
+          targetTriple = "x86_64-pc-windows-gnu";
+          needsWine = true;
+        };
+        
+        # Statically linked variants with musl libc
+        packages.linux-x86_64-static = buildFor {
+          targetSystem = "x86_64-linux";
+          targetTriple = "x86_64-unknown-linux-gnu";
+          staticBuild = true;
+        };
+        
+        packages.linux-aarch64-static = buildFor {
+          targetSystem = "aarch64-linux";
+          targetTriple = "aarch64-unknown-linux-gnu";
+          staticBuild = true;
+        };
+        
+        # Static Windows build
+        packages.windows-x86_64-gnu-static = buildFor {
+          targetSystem = "x86_64-windows";
+          targetTriple = "x86_64-pc-windows-gnu";
+          needsWine = true;
+          staticBuild = true;
+        };
+        
+        # MSVC builds - experimental
+        packages.windows-x86_64-msvc = buildFor {
+          targetSystem = "x86_64-windows";
+          targetTriple = "x86_64-pc-windows-msvc";
+          needsWine = true;
+          useMSVC = true;
+        };
+        
+        # Static MSVC builds - highly experimental
+        packages.windows-x86_64-msvc-static = buildFor {
+          targetSystem = "x86_64-windows";
+          targetTriple = "x86_64-pc-windows-msvc";
+          needsWine = true;
+          staticBuild = true;
+          useMSVC = true;
+        };
+        
+        # Development shell for cross-compilation
+        devShells.default = pkgs.mkShell {
+          nativeBuildInputs = [ pkgs.rust-bin.stable.latest.default ];
+          buildInputs = with pkgs; [ openssl pkg-config ];
+        };
+        
+        devShells.aarch64-linux = pkgs.mkShell {
+          nativeBuildInputs = [
+            (rust-overlay.lib.mkRustBin {} pkgsCrossAarch64.buildPackages
+              .stable.latest.default.override { targets = [ "aarch64-unknown-linux-gnu" ]; })
+            pkgs.pkg-config
+            pkgs.qemu
+          ];
+          buildInputs = with pkgs; [ openssl ];
+          
+          ENV = {
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER = "${pkgsCrossAarch64.stdenv.cc.targetPrefix}cc";
+            CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER = "qemu-aarch64";
+          };
+        };
+        
+        # Static development shell with musl
+        devShells.static = pkgs.mkShell {
+          nativeBuildInputs = [ 
+            (pkgs.rust-bin.stable.latest.default.override { 
+              targets = [ "x86_64-unknown-linux-musl" ]; 
+            })
+            pkgs.pkg-config 
+          ];
+          buildInputs = with pkgs; [ 
+            (pkgsStatic.openssl.override { static = true; }) 
+          ];
+          RUSTFLAGS = "-C target-feature=+crt-static";
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER = "${pkgsStatic.stdenv.cc.targetPrefix}cc";
+        };
+        
+        # Windows static development shell
+        devShells.windows-static = pkgs.mkShell {
+          nativeBuildInputs = [ 
+            (pkgs.rust-bin.stable.latest.default.override { 
+              targets = [ "x86_64-pc-windows-gnu" ]; 
+            })
+            pkgs.pkg-config
+            pkgs.wine
+          ];
+          buildInputs = with pkgsCrossWindowsStatic; [ 
+            windows.pthreads
+            openssl
+          ];
+          RUSTFLAGS = "-C target-feature=+crt-static -C linker=x86_64-w64-mingw32-gcc -C link-args=-static";
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${pkgsCrossWindowsStatic.stdenv.cc.targetPrefix}gcc";
+        };
+        
+        # MSVC development shell - experimental
+        devShells.windows-msvc = pkgs.mkShell {
+          nativeBuildInputs = [ 
+            (pkgs.rust-bin.stable.latest.default.override { 
+              targets = [ "x86_64-pc-windows-msvc" ]; 
+            })
+            pkgs.pkg-config
+            pkgs.wine
+            pkgs.llvmPackages.lld # For lld-link
+          ];
+          buildInputs = [ ];
+          RUSTFLAGS = "-C linker=lld-link";
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_LINKER = "lld-link";
+        };
+      }
+    );
+}

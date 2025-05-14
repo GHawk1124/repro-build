@@ -1,0 +1,45 @@
+{
+  description = "Rust flake for {{ package_name }}";
+
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    rust-overlay.url = "github:oxalica/rust-overlay";
+    flake-utils.url = "github:numtide/flake-utils";
+    {%- for inp in extra_inputs %}
+    {{ inp.name }}.url = {{ inp.url | quote }};
+    {%- endfor %}
+  };
+
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, {%- for inp in extra_inputs %} {{ inp.name }}, {%- endfor %} }: 
+    flake-utils.lib.eachDefaultSystem (system:
+      let
+        overlays = [ (import rust-overlay) ];
+        pkgs = import nixpkgs { 
+          inherit system overlays; 
+        };
+        # Import extra inputs
+        {%- for inp in extra_inputs %}
+        {{ inp.name }}_pkgs = import {{ inp.name }} { inherit system; };
+        {%- endfor %}
+      in {
+        packages.default = pkgs.rustPlatform.buildRustPackage {
+          pname = "{{ package_name }}";
+          version = "{{ package_version }}";
+          src = ../.;
+          
+          cargoLock = {
+            lockFile = ./Cargo.lock;
+          };
+          
+          buildInputs = with pkgs; [
+            openssl
+            pkg-config
+          ];
+          
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+          ];
+        };
+      }
+    );
+}
