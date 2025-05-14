@@ -7,12 +7,20 @@ edition = "2021"
 anyhow = "1.0.98"
 bollard = "0.18.1"
 cargo_metadata = "0.19.2"
-clap = { version = "4.5.37", features = ["derive"] }
+clap = { version = "4.5.38", features = ["derive"] }
 futures-util = "0.3.31"
-rust-embed = "8.7.1"
 serde = { version = "1.0.219", features = ["derive"] }
 tera = "1.20.0"
 tokio = { version = "1.45.0", features = ["full"] }
+
+# make release builds faster and smaller
+[profile.release]
+lto = true
+opt-level = "s"
+codegen-units = 1
+panic = "abort"
+panic-strategy = "abort"
+strip = true
 
 [lib]
 name = "repro_build_lib"
