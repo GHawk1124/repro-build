@@ -9,7 +9,7 @@ enum Cli {
     Build {
         #[arg(short, long, default_value = ".")]
         project: String,
-        #[arg(short, long, default_value = "nixos/nix:2.28.3")]
+        #[arg(short, long, default_value = "nixos/nix:latest")]
         image: String,
         #[arg(short, long, default_value = "x86_64-linux")]
         targets: String,
@@ -53,19 +53,15 @@ async fn main() -> Result<()> {
                     } else {
                         println!("Build artifacts are available in:");
                         if target_path.exists() {
-                            println!("- target/repro-build/ directory (recommended)");
-                        }
-                        if result_path.exists() {
-                            println!("- result/ directory (for backward compatibility)");
+                            println!("- target/repro-build/ directory");
                         }
                     }
                 },
                 Err(e) => {
                     eprintln!("Build failed: {}", e);
-                    eprintln!("\nTroubleshooting tips:");
-                    eprintln!("1. Make sure Docker is running and your user has permission to access it");
-                    eprintln!("2. Try running with the --image flag to use a different Nix image");
-                    eprintln!("3. Check the container logs above for more details");
+                    eprintln!("Make sure Docker is running and your user has permission to access it");
+                    eprintln!("Try running with the --image flag to use a different Nix image");
+                    eprintln!("Check the container logs above for more details");
                     return Err(e);
                 }
             }
