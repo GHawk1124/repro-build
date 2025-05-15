@@ -5,6 +5,9 @@ use futures_util::stream::TryStreamExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// Import color constants from lib.rs
+use crate::{RESET, BOLD, GREEN, BLUE, CYAN};
+
 /// Container info returned by setup_container
 pub struct ContainerInfo {
     pub id: String,
@@ -18,7 +21,7 @@ pub async fn setup_container(
     project_path: &Path,
     metadata_dir: &Path,
 ) -> Result<ContainerInfo> {
-    println!("Ensuring Nix image is available: {}", nix_image);
+    println!("{}{}Ensuring Nix image is available:{} {}", BOLD, BLUE, RESET, nix_image);
     docker.create_image(
         Some(CreateImageOptions {
             from_image: nix_image.to_string(),
@@ -48,10 +51,10 @@ pub async fn setup_container(
         name: container_name.clone(),
         platform: None,
     };
-    println!("Starting Nix container...");
+    println!("{}{}Starting Nix container...{}", BOLD, BLUE, RESET);
     let container = docker.create_container(Some(options), container_config).await?;
     docker.start_container(&container.id, None::<StartContainerOptions<String>>).await?;
-    println!("Container started: {}", container_name);
+    println!("{}{}Container started:{} {}", BOLD, GREEN, RESET, container_name);
     Ok(ContainerInfo {
         id: container.id,
         name: container_name,
@@ -60,10 +63,11 @@ pub async fn setup_container(
 
 /// Clean up a Docker container
 pub async fn cleanup_container(docker: &Docker, container_id: &str) -> Result<()> {
-    println!("Cleaning up container...");
+    println!("{}{}Cleaning up container...{}", BOLD, CYAN, RESET);
     docker.remove_container(container_id, Some(RemoveContainerOptions { 
         force: true,
         ..Default::default() 
     })).await?;
+    println!("{}{}Container removed successfully{}", BOLD, GREEN, RESET);
     Ok(())
 } 

@@ -7,7 +7,7 @@ use crate::ExtraInput;
 use crate::FLAKE_TEMPLATE;
 
 /// Generate a flake.nix file based on project metadata
-pub async fn generate_flake_file(flake_path: &Path, extra_inputs: &[ExtraInput]) -> Result<()> {
+pub async fn generate_flake_file(flake_path: &Path, extra_inputs: &[ExtraInput], rust_channel: &str, rust_version: &str) -> Result<()> {
     let metadata = MetadataCommand::new()
         .no_deps()
         .exec()?;
@@ -18,6 +18,8 @@ pub async fn generate_flake_file(flake_path: &Path, extra_inputs: &[ExtraInput])
     let mut context = tera::Context::new();
     context.insert("package_name", package_name);
     context.insert("package_version", package_version);
+    context.insert("rust_channel", rust_channel);
+    context.insert("rust_version", rust_version);
     let extra_inputs_formatted: Vec<HashMap<String, String>> = extra_inputs
         .iter()
         .map(|input| {
@@ -27,7 +29,6 @@ pub async fn generate_flake_file(flake_path: &Path, extra_inputs: &[ExtraInput])
             map
         })
         .collect();
-    
     context.insert("extra_inputs", &extra_inputs_formatted);
     let mut tera = Tera::default();
     tera.add_raw_template("flake.nix.hbs", FLAKE_TEMPLATE)?;

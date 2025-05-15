@@ -71,7 +71,7 @@
               else
                 targetTriple;
 
-            rustBin = pkgs.rust-bin.stable.latest.default.override {
+            rustBin = pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ actualTriple ];
             };
 
@@ -205,7 +205,7 @@
           src = ../.;
 
           nativeBuildInputs = [
-            (pkgs.rust-bin.stable.latest.default.override {
+            (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-pc-windows-msvc" ];
             })
             pkgs.cargo-xwin
@@ -243,14 +243,14 @@
 
         # ——— Dev-Shells ———
         devShells.default = pkgs.mkShell {
-          nativeBuildInputs = [ pkgs.rust-bin.stable.latest.default ];
+          nativeBuildInputs = [ pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default ];
           buildInputs = [ pkgs.openssl pkgs.pkg-config ];
         };
 
         devShells.aarch64-linux = pkgs.mkShell {
           nativeBuildInputs = [
             (rust-overlay.lib.mkRustBin { }
-              pkgsCrossAarch64.buildPackages.stable.latest.default.override {
+              pkgsCrossAarch64.buildPackages.{{ rust_channel }}.{{ rust_version }}.default.override {
                 targets = [ "aarch64-unknown-linux-gnu" ];
               })
             pkgs.pkg-config
@@ -265,7 +265,7 @@
 
         devShells.static = pkgs.mkShell {
           nativeBuildInputs = [
-            (pkgsStatic.rust-bin.stable.latest.default.override {
+            (pkgsStatic.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-unknown-linux-musl" ];
             })
             pkgs.pkg-config
@@ -279,7 +279,7 @@
 
         devShells.windows-static = pkgs.mkShell {
           nativeBuildInputs = [
-            (pkgs.rust-bin.stable.latest.default.override {
+            (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-pc-windows-gnu" ];
             })
             pkgs.pkg-config
@@ -297,6 +297,9 @@
 
         devShells.windows-msvc = pkgs.mkShell {
           nativeBuildInputs = [
+            (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+              targets = [ "x86_64-pc-windows-msvc" ];
+            })
             pkgs.cargo-xwin
             pkgs.clang
             pkgs.llvmPackages.lld
