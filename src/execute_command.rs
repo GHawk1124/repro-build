@@ -6,18 +6,15 @@ use std::time::{Duration, Instant};
 use crate::{RESET, BOLD, GREEN, RED, YELLOW, BLUE, CYAN};
 
 /// Helper function to execute a command in a container and stream the output
-pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> Result<()> {
+pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> Result<String> {
     let cmd_summary = cmd.lines().next().unwrap_or(cmd);
-    // Truncate summary if needed
     let display_cmd = if cmd_summary.len() > 70 { 
         format!("{}...", &cmd_summary[..67]) 
     } else { 
         cmd_summary.to_string() 
     };
-    
     print!("{}{}Executing:{} {} ", BOLD, BLUE, RESET, display_cmd);
     stdout().flush()?;
-    
     let exec_options = bollard::exec::CreateExecOptions {
         cmd: Some(vec!["sh", "-c", cmd]),
         attach_stdout: Some(true),
@@ -28,21 +25,22 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
     let exec = docker.create_exec(container_id, exec_options).await?;
     let started_exec = docker.start_exec(&exec.id, None).await?;
     
+    let mut full_output = String::new();
+    
     if let bollard::exec::StartExecResults::Attached { mut output, .. } = started_exec {
-        // For progress tracking
         let mut last_progress = String::new();
         let mut full_logs = Vec::new();
         let mut last_update = Instant::now();
         let update_interval = Duration::from_millis(250);
         let mut important_message_count = 0;
         let mut error_messages = Vec::new();
-        
         while let Some(Ok(output_chunk)) = output.next().await {
             match output_chunk {
                 bollard::container::LogOutput::StdOut { message } | 
                 bollard::container::LogOutput::StdErr { message } => {
                     let message_str = std::str::from_utf8(&message)?;
                     full_logs.push(message_str.to_string());
+                    full_output.push_str(message_str);
                     
                     // Capture error messages for better reporting
                     if message_str.contains("error:") {
@@ -75,24 +73,18 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
                         }
                         continue;
                     }
-                    
-                    // Update the progress indicator for important non-copying messages
                     if is_important {
                         let lines: Vec<&str> = message_str.lines().collect();
                         if !lines.is_empty() {
                             let progress_line = lines[lines.len() - 1].trim();
                             if !progress_line.is_empty() && progress_line != last_progress {
                                 last_progress = progress_line.to_string();
-                                
-                                // Trim progress line to fit on one line (with command)
                                 let max_progress_len = if display_cmd.len() > 30 { 40 } else { 60 };
                                 let trimmed_progress = if progress_line.len() > max_progress_len {
                                     format!("{}...", &progress_line[..max_progress_len-3])
                                 } else {
                                     progress_line.to_string()
                                 };
-                                
-                                // Color-code based on message type
                                 let color = if progress_line.contains("error") {
                                     RED
                                 } else if progress_line.contains("warning") {
@@ -102,7 +94,6 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
                                 } else {
                                     CYAN
                                 };
-                                
                                 print!("\r\x1B[K{}{}Executing:{} {} {}{}{}{}", 
                                     BOLD, BLUE, RESET, display_cmd, 
                                     BOLD, color, trimmed_progress, RESET);
@@ -159,5 +150,5 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
         return Err(anyhow!("Failed to start command execution"));
     }
     
-    Ok(())
+    Ok(full_output)
 }

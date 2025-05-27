@@ -2,6 +2,12 @@
 name = "repro_build"
 version = "0.1.0"
 edition = "2021"
+description = "Tool for reproducible builds using Nix inside Docker containers"
+license = "MIT"
+repository = "https://github.com/your-username/repro-build"
+readme = "README.md"
+keywords = ["nix", "docker", "build", "reproducible", "cross-compilation"]
+categories = ["development-tools::build-utils", "command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.98"
@@ -12,6 +18,7 @@ futures-util = "0.3.31"
 serde = { version = "1.0.219", features = ["derive"] }
 tera = "1.20.0"
 tokio = { version = "1.45.0", features = ["full"] }
+uuid = { version = "1.7.0", features = ["v4"] }
 
 # make release builds faster and smaller
 [profile.release]
@@ -19,7 +26,6 @@ lto = true
 opt-level = "s"
 codegen-units = 1
 panic = "abort"
-panic-strategy = "abort"
 strip = true
 
 [lib]

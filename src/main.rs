@@ -7,13 +7,15 @@ use std::path::Path;
 #[command(name = "repro-build", about = "Cargo subcommand for Nix-based Rust builds")]
 enum Cli {
     Build {
-        #[arg(short, long, default_value = ".")]
+        #[arg(short, long, default_value = ".", help = "Path location to your Cargo.toml or project root.")]
         project: String,
-        #[arg(short, long, default_value = "nixos/nix:latest")]
+        #[arg(short, long, default_value = "nixos/nix:latest", help = "Pin nix docker image to a specific version.")]
         image: String,
-        #[arg(short, long, default_value = "x86_64-linux")]
-        targets: String,
-        #[arg(long, value_delimiter = ',')]
+        #[arg(short, long, help = "Comma-separated list of targets to build for. If not specified, builds for host target.")]
+        targets: Option<String>,
+        #[arg(long, help = "List all available targets and exit")]
+        list_targets: bool,
+        #[arg(long, value_delimiter = ',', help = "Extra packages to install with nix.")]
         extra: Vec<String>,
         #[arg(long, default_value = "stable", help = "Rust channel: stable or nightly")]
         rust_channel: String,
@@ -22,10 +24,66 @@ enum Cli {
     },
 }
 
+// Available targets based on the flake template
+const AVAILABLE_TARGETS: &[&str] = &[
+    "x86_64-linux-gnu",
+    "aarch64-linux-gnu", 
+    "x86_64-linux-musl",
+    "aarch64-linux-musl",
+    "x86_64-w64-mingw32",       // Windows GNU
+    "x86_64-pc-windows-msvc", // Windows MSVC
+    "aarch64-w64-mingw32",      // Windows ARM GNU (experimental)
+];
+
+fn get_host_target() -> &'static str {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        "x86_64-linux-gnu"
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        "aarch64-linux-gnu"
+    }
+    #[cfg(all(target_arch = "x86_64", target_os = "windows"))]
+    {
+        "x86_64-w64-mingw32" // Default to GNU for Windows host
+    }
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_os = "linux"),
+        all(target_arch = "aarch64", target_os = "linux"),
+        all(target_arch = "x86_64", target_os = "windows")
+    )))]
+    {
+        "x86_64-linux-gnu"  // Default fallback
+    }
+}
+
+fn print_available_targets() {
+    println!("{}{}Available targets:{}", BOLD, CYAN, RESET);
+    for target in AVAILABLE_TARGETS {
+        let description = match *target {
+            "x86_64-linux-gnu" => "Linux x86_64 (GNU libc, dynamic)",
+            "aarch64-linux-gnu" => "Linux ARM64/AArch64 (GNU libc, dynamic)",
+            "x86_64-linux-musl" => "Linux x86_64 (musl libc, static)",
+            "aarch64-linux-musl" => "Linux ARM64/AArch64 (musl libc, static)",
+            "x86_64-w64-mingw32" => "Windows x86_64 (MinGW-w64/GNU)",
+            "x86_64-pc-windows-msvc" => "Windows x86_64 (MSVC toolchain)",
+            "aarch64-w64-mingw32" => "Windows ARM64 (MinGW-w64/GNU, experimental)",
+            _ => "Unknown target",
+        };
+        println!("   - {}: {}", target, description);
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse() {
-        Cli::Build { project, image, targets, extra, rust_channel, rust_version } => {
+        Cli::Build { project, image, targets, list_targets, extra, rust_channel, rust_version } => {
+            if list_targets {
+                print_available_targets();
+                return Ok(());
+            }
+
             let project_path = Path::new(&project);
             if !project_path.exists() {
                 eprintln!("{}{}ERROR:{} Project path '{}' does not exist", BOLD, RED, RESET, project);
@@ -42,7 +100,25 @@ async fn main() -> Result<()> {
                     Some(ExtraInput { name: name.to_string(), url: url.to_string() })
                 } else { None }
             }).collect();
-            let t: Vec<&str> = targets.split(',').collect();
+            
+            // Determine targets to build
+            let target_string = match targets {
+                Some(t) => t,
+                None => {
+                    let host_target = get_host_target();
+                    println!("{}{}INFO:{} No targets specified, building for host target: {}", BOLD, CYAN, RESET, host_target);
+                    host_target.to_string()
+                }
+            };
+            let t: Vec<&str> = target_string.split(',').collect();
+            
+            // Validate targets
+            for target in &t {
+                if !AVAILABLE_TARGETS.contains(target) {
+                    eprintln!("{}{}ERROR:{} Unknown target '{}'. Use --list-targets to see available targets.", BOLD, RED, RESET, target);
+                    return Err(anyhow::anyhow!("Invalid target: {}", target));
+                }
+            }
             
             println!("{}{}Configuration:{}", BOLD, CYAN, RESET);
             println!("   - Project: {}", project);
@@ -77,6 +153,7 @@ async fn main() -> Result<()> {
                     eprintln!("   - Make sure Docker is running and your user has permission to access it");
                     eprintln!("   - Try running with the --image flag to use a different Nix image");
                     eprintln!("   - Check the error details above for more information");
+                    eprintln!("   - Use --list-targets to see all available build targets");
                     Err(e)
                 }
             }

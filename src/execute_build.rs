@@ -1,51 +1,47 @@
 use anyhow::{anyhow, Result};
 use bollard::Docker;
 use crate::execute_command::execute_command;
-use crate::{RESET, BOLD, GREEN, RED, YELLOW, MAGENTA};
+use crate::{RESET, BOLD, GREEN, RED, YELLOW, MAGENTA, BuildLogger};
+
+/// Parse target name and determine build characteristics
+fn parse_target(target: &str) -> (String, bool, bool) {
+    // Returns (actual_target_name_for_flake, is_windows_msvc, is_static_musl)
+    match target {
+        "x86_64-linux-gnu" => (target.to_string(), false, false),
+        "aarch64-linux-gnu" => (target.to_string(), false, false),
+        "x86_64-linux-musl" => (target.to_string(), false, true),
+        "aarch64-linux-musl" => (target.to_string(), false, true),
+        "x86_64-w64-mingw32" => (target.to_string(), false, false),      // Windows GNU
+        "x86_64-pc-windows-msvc" => (target.to_string(), true, false), // Windows MSVC
+        "aarch64-w64-mingw32" => (target.to_string(), false, false),     // Windows ARM GNU
+        _ => (target.to_string(), false, false), // Fallback, though should be caught by main.rs validation
+    }
+}
 
 pub async fn execute_nix_build(
     docker: &Docker,
     container_id: &str,
     targets: &[&str],
+    logger: &BuildLogger,
 ) -> Result<()> {
     let create_target_dir = "mkdir -p ./target/repro-build";
-    execute_command(docker, container_id, create_target_dir).await?;
+    let output = execute_command(docker, container_id, create_target_dir).await?;
+    logger.log_command(create_target_dir, &output).await?;
     
     println!("{}{}Starting build process for {} target(s)...{}", BOLD, MAGENTA, targets.len(), RESET);
+    logger.log(&format!("Starting build process for {} target(s)...", targets.len())).await?;
     
     let mut all_builds_successful = true;
     
     for target in targets {
-        // Remove "packages." prefix if it exists
-        let clean_target = if target.starts_with("packages.") {
-            &target["packages.".len()..]
-        } else {
-            target
-        };
+        // Parse the target to get build characteristics
+        let (clean_target, is_windows_msvc, _is_static_musl) = parse_target(target);
         
         println!("\n{}{}Building for target:{} {}", BOLD, MAGENTA, RESET, clean_target);
-        
-        // Check if target is Windows MSVC
-        let is_windows_msvc = clean_target.contains("windows") && clean_target.contains("msvc");
+        logger.log(&format!("Building for target: {}", clean_target)).await?;
         
         // Main build command with sandbox option for Windows MSVC
         let sandbox_option = if is_windows_msvc { "--option sandbox false" } else { "" };
-        
-        // Execute each command individually instead of using &&
-        
-        // Configure git
-        if let Err(e) = execute_command(docker, container_id, "git config --global --add safe.directory /src").await {
-            println!("{}{}Git configuration failed:{} {}", BOLD, RED, RESET, e);
-            all_builds_successful = false;
-            continue;
-        }
-        
-        // Add metadata directory
-        if let Err(e) = execute_command(docker, container_id, "git add .repro-build").await {
-            println!("{}{}Failed to add metadata directory:{} {}", BOLD, RED, RESET, e);
-            all_builds_successful = false;
-            continue;
-        }
         
         // Run nix build
         let nix_build_cmd = format!(
@@ -53,52 +49,80 @@ pub async fn execute_nix_build(
             sandbox_option, clean_target, clean_target
         );
         
-        if let Err(e) = execute_command(docker, container_id, &nix_build_cmd).await {
-            println!("{}{}Build failed for target {}:{} {}", BOLD, RED, clean_target, RESET, e);
-            all_builds_successful = false;
-            
-            // Try to get more information about the build failure
-            let _ = execute_command(docker, container_id, "cat .repro-build/flake.nix").await;
-            
-            continue;
+        let build_result = execute_command(docker, container_id, &nix_build_cmd).await;
+        match build_result {
+            Ok(output) => {
+                logger.log_command(&nix_build_cmd, &output).await?;
+            },
+            Err(e) => {
+                println!("{}{}Build failed for target {}:{} {}", BOLD, RED, clean_target, RESET, e);
+                logger.log(&format!("Build failed for target {}: {}", clean_target, e)).await?;
+                
+                // Try to get more information about the build failure
+                if let Ok(flake_content) = execute_command(docker, container_id, "cat .repro-build/flake.nix").await {
+                    logger.log("Flake content for debugging:").await?;
+                    logger.log(&flake_content).await?;
+                }
+                
+                all_builds_successful = false;
+                continue;
+            }
         }
         
         // Check if the build produced any output
         let check_output_cmd = format!("if [ -L ./result-{0} ] && [ -e ./result-{0} ]; then echo \"true\"; else echo \"false\"; fi", clean_target);
         
         if let Ok(output) = execute_command(docker, container_id, &check_output_cmd).await {
+            logger.log_command(&check_output_cmd, &output).await?;
+            
             // Create target directory
             let mkdir_cmd = format!("mkdir -p ./target/repro-build/{}", clean_target);
             if let Err(e) = execute_command(docker, container_id, &mkdir_cmd).await {
                 println!("{}{}Failed to create target directory:{} {}", BOLD, YELLOW, RESET, e);
+                logger.log(&format!("Failed to create target directory: {}", e)).await?;
                 continue;
+            } else {
+                let output = execute_command(docker, container_id, &mkdir_cmd).await?;
+                logger.log_command(&mkdir_cmd, &output).await?;
             }
             
             // Copy build artifacts
             let copy_cmd = format!("cp -r ./result-{}/* ./target/repro-build/{}/", clean_target, clean_target);
             if let Err(e) = execute_command(docker, container_id, &copy_cmd).await {
                 println!("{}{}Failed to copy build artifacts:{} {}", BOLD, YELLOW, RESET, e);
+                logger.log(&format!("Failed to copy build artifacts: {}", e)).await?;
                 continue;
+            } else {
+                let output = execute_command(docker, container_id, &copy_cmd).await?;
+                logger.log_command(&copy_cmd, &output).await?;
             }
             
             // Cleanup result symlink
             let cleanup_cmd = format!("rm -rf ./result-{}", clean_target);
             if let Err(e) = execute_command(docker, container_id, &cleanup_cmd).await {
                 println!("{}{}Failed to clean up symlink:{} {}", BOLD, YELLOW, RESET, e);
+                logger.log(&format!("Failed to clean up symlink: {}", e)).await?;
+            } else {
+                let output = execute_command(docker, container_id, &cleanup_cmd).await?;
+                logger.log_command(&cleanup_cmd, &output).await?;
             }
             
             println!("{}{}Build successful for target:{} {}", BOLD, GREEN, RESET, clean_target);
+            logger.log(&format!("Build successful for target: {}", clean_target)).await?;
         } else {
             println!("{}{}Build produced no output for target:{} {}", BOLD, YELLOW, RESET, clean_target);
+            logger.log(&format!("Build produced no output for target: {}", clean_target)).await?;
             all_builds_successful = false;
         }
     }
     
     if all_builds_successful {
         println!("\n{}{}All builds completed successfully!{}", BOLD, GREEN, RESET);
+        logger.log("All builds completed successfully!").await?;
         Ok(())
     } else {
         println!("\n{}{}Some builds failed or produced no output{}", BOLD, YELLOW, RESET);
+        logger.log("Some builds failed or produced no output").await?;
         Err(anyhow!("Not all builds were successful"))
     }
 } 

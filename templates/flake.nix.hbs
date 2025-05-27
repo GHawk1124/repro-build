@@ -47,29 +47,26 @@
         buildFor = { targetSystem, targetTriple, needsWine ? false
           , staticBuild ? false }:
           let
-            targetPkgs =
-              if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then
-                pkgsStatic
-              else if staticBuild && targetTriple
-              == "aarch64-unknown-linux-gnu" then
-                pkgsAarch64Static
-              else if staticBuild && targetTriple
-              == "x86_64-pc-windows-gnu" then
-                pkgsCrossWindowsStatic
-              else if targetTriple == "x86_64-pc-windows-gnu" then
-                pkgsCrossWindows
-              else if targetTriple == "aarch64-unknown-linux-gnu" then
-                pkgsCrossAarch64
-              else
-                pkgs;
-            actualTriple =
-              if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then
-                "x86_64-unknown-linux-musl"
-              else if staticBuild && targetTriple
-              == "aarch64-unknown-linux-gnu" then
-                "aarch64-unknown-linux-musl"
-              else
-                targetTriple;
+            # Map gcc -dumpmachine style to pkgs
+            nixTargetSystem = 
+              if targetTriple == "x86_64-unknown-linux-musl" then "x86_64-linux"
+              else if targetTriple == "aarch64-unknown-linux-musl" then "aarch64-linux"
+              else if targetTriple == "x86_64-pc-windows-gnu" then "x86_64-windows"
+              else if targetTriple == "aarch64-pc-windows-gnu" then "aarch64-windows"
+              else targetSystem; # Default to what was passed for -linux-gnu
+
+            targetPkgs = # This section determines the Nix package set based on the Rust targetTriple and staticBuild
+              if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then pkgsStatic # x86_64-linux-musl
+              else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then pkgsAarch64Static # aarch64-linux-musl
+              else if targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindows # x86_64-w64-mingw32 (dynamic, static is handled by pkgsCrossWindowsStatic in RUSTFLAGS)
+              else if targetTriple == "aarch64-pc-windows-gnu" then pkgs.pkgsCross.aarch64-multiplatform-windows # Placeholder, assuming a similar structure for ARM windows
+              else pkgs; # for x86_64-linux-gnu, aarch64-linux-gnu
+
+            actualTriple = # This is the Rust triple used by rust-bin and CARGO_BUILD_TARGET
+              if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then "x86_64-unknown-linux-musl"
+              else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then "aarch64-unknown-linux-musl"
+              # For windows-gnu, static is handled via RUSTFLAGS, so actualTriple remains x86_64-pc-windows-gnu
+              else targetTriple;
 
             rustBin = pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ actualTriple ];
@@ -98,7 +95,9 @@
                 [ ]);
 
             rustFlags =
-              if staticBuild then "-C target-feature=+crt-static" else "";
+              if staticBuild && (actualTriple == "x86_64-unknown-linux-musl" || actualTriple == "aarch64-unknown-linux-musl") then "-C target-feature=+crt-static"
+              else if targetTriple == "x86_64-pc-windows-gnu" && staticBuild then "-C target-feature=+crt-static -C linker=${pkgsCrossWindowsStatic.stdenv.cc.targetPrefix}gcc -C link-args=-static"
+              else "";
 
             extraEnv = builtins.listToAttrs (lib.concatLists [
               (if targetTriple == "x86_64-unknown-linux-gnu"
@@ -134,7 +133,20 @@
           in targetPkgs.rustPlatform.buildRustPackage rec {
             pname = "{{ package_name }}";
             version = "{{ package_version }}";
-            src = ../.;
+            src = pkgs.lib.cleanSourceWith {
+              src = ../.;
+              filter = path: type:
+                let baseName = baseNameOf path; in
+                  (type == "directory" && baseName != "target" && baseName != ".git" && baseName != "result" && baseName != ".repro-build") ||
+                  (type == "regular" && (
+                    pkgs.lib.hasSuffix ".rs" baseName ||
+                    pkgs.lib.hasSuffix ".toml" baseName ||
+                    pkgs.lib.hasSuffix ".lock" baseName ||
+                    pkgs.lib.hasSuffix ".md" baseName ||
+                    baseName == "LICENSE" ||
+                    baseName == ".gitignore"
+                  ));
+            };
             cargoLock = { lockFile = ../Cargo.lock; };
             release = true;
 
@@ -158,51 +170,66 @@
           };
 
       in {
-        # Native
-        packages.default = buildFor {
-          targetSystem = system;
-          targetTriple = if system == "x86_64-linux" then
-            "x86_64-unknown-linux-gnu"
-          else
-            "aarch64-unknown-linux-gnu";
-        };
-
-        # GNU cross-builds
-        packages.linux-x86_64 = buildFor {
+        # Native builds with new naming scheme
+        packages."x86_64-linux-gnu" = buildFor {
           targetSystem = "x86_64-linux";
           targetTriple = "x86_64-unknown-linux-gnu";
         };
-        packages.linux-aarch64 = buildFor {
+        packages."aarch64-linux-gnu" = buildFor {
           targetSystem = "aarch64-linux";
           targetTriple = "aarch64-unknown-linux-gnu";
         };
-        packages.windows-x86_64-gnu = buildFor {
-          targetSystem = "x86_64-windows";
-          targetTriple = "x86_64-pc-windows-gnu";
-          needsWine = true;
-        };
-        packages.linux-x86_64-static = buildFor {
-          targetSystem = "x86_64-linux";
-          targetTriple = "x86_64-unknown-linux-gnu";
+
+        # Static musl builds
+        packages."x86_64-linux-musl" = buildFor {
+          targetSystem = "x86_64-linux"; # Original system for pkgs derivation
+          targetTriple = "x86_64-unknown-linux-gnu"; # Rust GNU triple that gets converted to musl
           staticBuild = true;
         };
-        packages.linux-aarch64-static = buildFor {
+        packages."aarch64-linux-musl" = buildFor {
           targetSystem = "aarch64-linux";
           targetTriple = "aarch64-unknown-linux-gnu";
           staticBuild = true;
         };
-        packages.windows-x86_64-gnu-s = buildFor {
-          targetSystem = "x86_64-windows";
-          targetTriple = "x86_64-pc-windows-gnu";
+
+        # Windows builds (GNU default)
+        packages."x86_64-w64-mingw32" = buildFor {
+          targetSystem = "x86_64-windows"; # Nix system string
+          targetTriple = "x86_64-pc-windows-gnu"; # Rust triple
           needsWine = true;
-          staticBuild = true;
+          # To make this static, the user would need to select a different target or we need a new flag
+        };
+        # Example for a statically linked mingw, if we add a specific target for it:
+        # packages."x86_64-w64-mingw32-static" = buildFor {
+        #   targetSystem = "x86_64-windows";
+        #   targetTriple = "x86_64-pc-windows-gnu";
+        #   needsWine = true;
+        #   staticBuild = true; 
+        # };
+        packages."aarch64-w64-mingw32" = buildFor {
+          targetSystem = "aarch64-windows";
+          targetTriple = "aarch64-pc-windows-gnu"; # Assuming this is the Rust triple for ARM Windows GNU
+          needsWine = true; # May need QEMU as well or instead depending on host
         };
 
-        # ——— MSVC build via cargo-xwin ———
-        packages.windows-x86_64-msvc = pkgs.stdenv.mkDerivation {
+        # Windows MSVC builds (uses pkgs.stdenv.mkDerivation directly, not buildFor)
+        packages."x86_64-pc-windows-msvc" = pkgs.stdenv.mkDerivation {
           pname = "{{ package_name }}-msvc";
           version = "{{ package_version }}";
-          src = ../.;
+          src = pkgs.lib.cleanSourceWith {
+            src = ../.;
+            filter = path: type:
+              let baseName = baseNameOf path; in
+                (type == "directory" && baseName != "target" && baseName != ".git" && baseName != "result" && baseName != ".repro-build") ||
+                (type == "regular" && (
+                  pkgs.lib.hasSuffix ".rs" baseName ||
+                  pkgs.lib.hasSuffix ".toml" baseName ||
+                  pkgs.lib.hasSuffix ".lock" baseName ||
+                  pkgs.lib.hasSuffix ".md" baseName ||
+                  baseName == "LICENSE" ||
+                  baseName == ".gitignore"
+                ));
+          };
 
           nativeBuildInputs = [
             (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
@@ -241,13 +268,16 @@
           '';
         };
 
+        # Default package points to the host's gcc -dumpmachine style triple
+        default = self.packages."${pkgs.stdenv.hostPlatform.config}";
+
         # ——— Dev-Shells ———
         devShells.default = pkgs.mkShell {
           nativeBuildInputs = [ pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default ];
           buildInputs = [ pkgs.openssl pkgs.pkg-config ];
         };
 
-        devShells.aarch64-linux = pkgs.mkShell {
+        devShells."aarch64-linux-gnu" = pkgs.mkShell {
           nativeBuildInputs = [
             (rust-overlay.lib.mkRustBin { }
               pkgsCrossAarch64.buildPackages.{{ rust_channel }}.{{ rust_version }}.default.override {
@@ -263,7 +293,7 @@
           '';
         };
 
-        devShells.static = pkgs.mkShell {
+        devShells."x86_64-linux-musl" = pkgs.mkShell {
           nativeBuildInputs = [
             (pkgsStatic.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-unknown-linux-musl" ];
@@ -277,7 +307,7 @@
           '';
         };
 
-        devShells.windows-static = pkgs.mkShell {
+        devShells."x86_64-w64-mingw32" = pkgs.mkShell {
           nativeBuildInputs = [
             (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-pc-windows-gnu" ];
@@ -295,7 +325,7 @@
           '';
         };
 
-        devShells.windows-msvc = pkgs.mkShell {
+        devShells."x86_64-pc-windows-msvc" = pkgs.mkShell {
           nativeBuildInputs = [
             (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
               targets = [ "x86_64-pc-windows-msvc" ];

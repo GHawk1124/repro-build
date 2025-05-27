@@ -9,8 +9,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::{RESET, BOLD, GREEN, BLUE, CYAN};
 
 /// Container info returned by setup_container
+#[derive(Debug)]
 pub struct ContainerInfo {
     pub id: String,
+    #[allow(dead_code)]
     pub name: String,
 }
 
