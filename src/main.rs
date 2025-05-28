@@ -1,5 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
+use cargo_metadata::MetadataCommand;
 use repx_lib::{build_with_nix, ExtraInput, RESET, BOLD, GREEN, RED, YELLOW, CYAN, MAGENTA};
 use std::path::Path;
 
@@ -22,6 +23,8 @@ enum Cli {
         #[arg(long, default_value = "latest", help = "Rust version, e.g. '1.75.0' or 'latest'")]
         rust_version: String,
     },
+    #[command(about = "Print the repx version")]
+    Release,
 }
 
 // Available targets based on the flake template
@@ -87,6 +90,19 @@ fn print_available_targets() {
         };
         println!("   - {}: {}", target, description);
     }
+}
+
+fn print_version() -> Result<()> {
+    let metadata = MetadataCommand::new().exec()?;
+
+    // Find the repx package in the metadata
+    let repx_package = metadata.packages
+        .iter()
+        .find(|p| p.name.as_str() == "repx")
+        .ok_or_else(|| anyhow::anyhow!("Could not find repx package in metadata"))?;
+
+    println!("{}{}repx version:{} {}", BOLD, CYAN, RESET, repx_package.version);
+    Ok(())
 }
 
 #[tokio::main]
@@ -171,6 +187,10 @@ async fn main() -> Result<()> {
                     Err(e)
                 }
             }
+        },
+        Cli::Release => {
+            print_version()?;
+            Ok(())
         }
     }
 }
