@@ -8,6 +8,34 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // Import color constants from lib.rs
 use crate::{RESET, BOLD, GREEN, BLUE, CYAN};
 
+/// Convert a Windows path to a Docker-compatible format
+fn windows_path_to_docker(path: &Path) -> String {
+    let path_str = path.display().to_string();
+    
+    // Handle Windows extended path format (\\?\)
+    if path_str.starts_with("\\\\?\\") {
+        let cleaned = &path_str[4..]; // Remove \\?\
+        
+        // Convert Windows drive letter to Unix-style path for Docker
+        if cleaned.len() >= 3 && cleaned.chars().nth(1) == Some(':') {
+            let drive = cleaned.chars().nth(0).unwrap().to_ascii_lowercase();
+            let rest = &cleaned[2..].replace('\\', "/");
+            format!("/{}{}", drive, rest)
+        } else {
+            cleaned.replace('\\', "/")
+        }
+    } else {
+        // Handle regular Windows paths
+        if cfg!(windows) && path_str.len() >= 3 && path_str.chars().nth(1) == Some(':') {
+            let drive = path_str.chars().nth(0).unwrap().to_ascii_lowercase();
+            let rest = &path_str[2..].replace('\\', "/");
+            format!("/{}{}", drive, rest)
+        } else {
+            path_str
+        }
+    }
+}
+
 /// Container info returned by setup_container
 #[derive(Debug)]
 pub struct ContainerInfo {
@@ -34,8 +62,8 @@ pub async fn setup_container(
     ).try_collect::<Vec<_>>().await?;
     let host_cfg = HostConfig {
         binds: Some(vec![
-            format!("{}:/src:rw", project_path.display()),  // Mount project as read-write
-            format!("{}:/flake-dir:rw", metadata_dir.display()),  // Mount metadata dir as writable
+            format!("{}:/app:rw", windows_path_to_docker(project_path)),  // Mount project as read-write
+            format!("{}:/flake-dir:rw", windows_path_to_docker(metadata_dir)),  // Mount metadata dir as writable
         ]),
         privileged: Some(true),
         ..Default::default()
@@ -43,7 +71,7 @@ pub async fn setup_container(
     let container_config = Config {
         image: Some(nix_image.to_string()),
         cmd: Some(vec!["sleep".to_string(), "3600".to_string()]), // Keep container running
-        working_dir: Some("/src".to_string()),  // Set working directory to /src
+        working_dir: Some("/app".to_string()),  // Set working directory to /app
         host_config: Some(host_cfg),
         ..Default::default()
     };

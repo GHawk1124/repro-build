@@ -1,7 +1,7 @@
 use anyhow::Result;
 use bollard::Docker;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 mod generate_flake;
@@ -14,9 +14,9 @@ mod logging;
 
 pub mod build_script {
     //! This module provides integration for build.rs scripts.
-    //! 
+    //!
     //! Use this to add reproducible builds to your project as a build dependency.
-    
+
     pub use crate::build_integration::run_build;
 }
 
@@ -47,6 +47,23 @@ pub struct ExtraInput {
     pub url: String,
 }
 
+/// Generate a .gitignore file for the .repro-build directory
+async fn generate_gitignore(metadata_dir: &Path) -> Result<()> {
+    let gitignore_path = metadata_dir.join(".gitignore");
+
+    // Only create if it doesn't exist
+    if !gitignore_path.exists() {
+        let gitignore_content = r#"# Ignore log files and directories
+logs/
+*.log
+"#;
+
+        tokio::fs::write(&gitignore_path, gitignore_content).await?;
+    }
+
+    Ok(())
+}
+
 /// Build a Rust project with Nix inside Docker
 pub async fn build_with_nix(
     nix_image: &str,
@@ -62,11 +79,14 @@ pub async fn build_with_nix(
     if !metadata_dir.exists() {
         tokio::fs::create_dir_all(&metadata_dir).await?;
     }
-    
+
+    // Generate .gitignore for the .repro-build directory
+    generate_gitignore(&metadata_dir).await?;
+
     // Initialize logger
     let logger = BuildLogger::new(&metadata_dir).await?;
     println!("{}{}Logging to {}{}", BOLD, BLUE, logger.log_file().display(), RESET);
-    
+
     // Log build configuration
     let mut config = HashMap::new();
     config.insert("Docker Image".to_string(), nix_image.to_string());
@@ -75,9 +95,9 @@ pub async fn build_with_nix(
     config.insert("Rust Channel".to_string(), rust_channel.to_string());
     config.insert("Rust Version".to_string(), rust_version.to_string());
     config.insert("Build ID".to_string(), logger.build_id().to_string());
-    
+
     logger.log_build_config(&config).await?;
-    
+
     // Create flake.nix if it doesn't exist
     let flake_path = metadata_dir.join("flake.nix");
     let flake_exists = tokio::fs::metadata(&flake_path).await.is_ok();
@@ -90,7 +110,7 @@ pub async fn build_with_nix(
         println!("{}{}Using existing flake.nix at {}{}", BOLD, BLUE, flake_path.display(), RESET);
         logger.log(&format!("Using existing flake.nix at {}", flake_path.display())).await?;
     }
-    
+
     // Set up the Docker container
     logger.log("Setting up Docker container").await?;
     let container = setup_container(&docker, nix_image, &abs_project_path, &metadata_dir).await?;
@@ -99,18 +119,18 @@ pub async fn build_with_nix(
     // Configure git safe directory inside the container
     // This is crucial to run before any nix commands that might access .git history for flake inputs
     logger.log("Configuring git safe directory in container").await?;
-    let git_config_cmd = "git config --global --add safe.directory /src";
+    let git_config_cmd = "git config --global --add safe.directory /app";
     match execute_command(&docker, &container.id, git_config_cmd).await {
         Ok(output) => {
             logger.log_command(git_config_cmd, &output).await?;
         }
         Err(e) => {
-            // Log the error but attempt to continue; some images might not have git or this might not be strictly necessary if not using git-based flake inputs directly from /src
+            // Log the error but attempt to continue; some images might not have git or this might not be strictly necessary if not using git-based flake inputs directly from /app
             logger.log(&format!("Warning: Failed to set git safe.directory: {}. This might cause issues if your flake relies on git history from the source directory.", e)).await?;
             println!("{}{}Warning:{} Failed to set git safe.directory in container. Build might proceed if git history isn't needed for local flake inputs.", BOLD, YELLOW, RESET);
         }
     }
-    
+
     // Generate Cargo.lock if needed
     let cargo_lock_path = abs_project_path.join("Cargo.lock");
     let cargo_lock_exists = tokio::fs::metadata(&cargo_lock_path).await.is_ok();
@@ -121,7 +141,7 @@ pub async fn build_with_nix(
         let output = execute_command(&docker, &container.id, cmd).await?;
         logger.log_command(cmd, &output).await?;
     }
-    
+
     // Generate flake.lock if needed
     let flake_lock_path = metadata_dir.join("flake.lock");
     let lock_exists = tokio::fs::metadata(&flake_lock_path).await.is_ok();
@@ -134,20 +154,20 @@ pub async fn build_with_nix(
         println!("{}{}Using existing flake.lock{}", BOLD, BLUE, RESET);
         logger.log("Using existing flake.lock").await?;
     }
-    
+
     // Execute the Nix build
     logger.log(&format!("Starting build for targets: {}", targets.join(", "))).await?;
     let build_result = execute_nix_build(&docker, &container.id, targets, &logger).await;
-    
+
     // Clean up
     logger.log("Cleaning up container").await?;
     cleanup_container(&docker, &container.id).await?;
-    
+
     // Log build completion
     let success = build_result.is_ok();
     logger.log_build_completion(success).await?;
     logger.flush().await?;
-    
+
     // Return the build result
     build_result
 }

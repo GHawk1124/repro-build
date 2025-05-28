@@ -19,7 +19,7 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
         cmd: Some(vec!["sh", "-c", cmd]),
         attach_stdout: Some(true),
         attach_stderr: Some(true),
-        working_dir: Some("/src"),
+        working_dir: Some("/app"),
         ..Default::default()
     };
     let exec = docker.create_exec(container_id, exec_options).await?;
@@ -31,9 +31,11 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
         let mut last_progress = String::new();
         let mut full_logs = Vec::new();
         let mut last_update = Instant::now();
-        let update_interval = Duration::from_millis(250);
+        let update_interval = Duration::from_millis(500); // Increase interval
         let mut important_message_count = 0;
         let mut error_messages = Vec::new();
+        let mut last_displayed_count = 0;
+        
         while let Some(Ok(output_chunk)) = output.next().await {
             match output_chunk {
                 bollard::container::LogOutput::StdOut { message } | 
@@ -47,33 +49,32 @@ pub async fn execute_command(docker: &Docker, container_id: &str, cmd: &str) -> 
                         error_messages.push(message_str.trim().to_string());
                     }
                     
-                    // Always clear the line before updating
-                    print!("\r\x1B[K");
+                    // For messages about copying from cache, count them but don't display individually
+                    if message_str.contains("copying path") {
+                        important_message_count += 1;
+                        
+                        // Only update the counter at intervals AND if count changed significantly
+                        if last_update.elapsed() >= update_interval && 
+                           (important_message_count - last_displayed_count) >= 10 {
+                            print!("\r\x1B[K{}{}Executing:{} {} {}{}(copied {} paths){}", 
+                                BOLD, BLUE, RESET, display_cmd, 
+                                CYAN, BOLD, important_message_count, RESET);
+                            stdout().flush()?;
+                            last_update = Instant::now();
+                            last_displayed_count = important_message_count;
+                        }
+                        continue;
+                    }
                     
                     // Determine if this is an important progress message
                     let is_important = message_str.contains("evaluating") || 
                                        message_str.contains("building") || 
                                        message_str.contains("downloading") || 
                                        message_str.contains("fetching") ||
-                                       message_str.contains("copying") ||
                                        message_str.contains("error") ||
                                        message_str.contains("warning");
                     
-                    // For messages about copying from cache, count them but don't display individually
-                    if message_str.contains("copying path") {
-                        important_message_count += 1;
-                        
-                        // Only update the counter at intervals
-                        if last_update.elapsed() >= update_interval {
-                            print!("\r\x1B[K{}{}Executing:{} {} {}{}(copied {} paths){}", 
-                                BOLD, BLUE, RESET, display_cmd, 
-                                CYAN, BOLD, important_message_count, RESET);
-                            stdout().flush()?;
-                            last_update = Instant::now();
-                        }
-                        continue;
-                    }
-                    if is_important {
+                    if is_important && last_update.elapsed() >= update_interval {
                         let lines: Vec<&str> = message_str.lines().collect();
                         if !lines.is_empty() {
                             let progress_line = lines[lines.len() - 1].trim();

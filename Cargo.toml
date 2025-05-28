@@ -8,6 +8,12 @@ repository = "https://github.com/your-username/repro-build"
 readme = "README.md"
 keywords = ["nix", "docker", "build", "reproducible", "cross-compilation"]
 categories = ["development-tools::build-utils", "command-line-utilities"]
+include = [
+    "src/**/*",
+    "templates/**/*",
+    "Cargo.toml",
+    "README.md"
+]
 
 [dependencies]
 anyhow = "1.0.98"
