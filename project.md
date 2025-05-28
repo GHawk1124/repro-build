@@ -1,8 +1,8 @@
-# Repro-Build: Reproducible Builds with Nix
+# Repx: Reproducible Builds with Nix
 
 ## Project Description
 
-Repro-Build is a tool designed to provide bit-for-bit reproducible builds for Rust software (with plans to expand to other languages) using Nix inside Docker containers. The core philosophy is to achieve the highest degree of reproducibility by controlling every aspect of the build environment:
+Repx is a tool designed to provide bit-for-bit reproducible builds for Rust software (with plans to expand to other languages) using Nix inside Docker containers. The core philosophy is to achieve the highest degree of reproducibility by controlling every aspect of the build environment:
 
 - Precise Docker image version for Nix
 - Exact Rust toolchain version
@@ -60,4 +60,4 @@ Contributions are welcome! Please feel free to submit a Pull Request or open an 
 
 ## License
 
-[License information to be added] 
+[License information to be added]

@@ -1,10 +1,10 @@
 [package]
-name = "repro_build"
+name = "repx"
 version = "0.1.0"
 edition = "2021"
 description = "Tool for reproducible builds using Nix inside Docker containers"
 license = "MIT"
-repository = "https://github.com/your-username/repro-build"
+repository = "https://github.com/your-username/repx"
 readme = "README.md"
 keywords = ["nix", "docker", "build", "reproducible", "cross-compilation"]
 categories = ["development-tools::build-utils", "command-line-utilities"]
@@ -35,9 +35,9 @@ panic = "abort"
 strip = true
 
 [lib]
-name = "repro_build_lib"
+name = "repx_lib"
 path = "src/lib.rs"
 
 [[bin]]
-name = "repro_build"
+name = "repx"
 path = "src/main.rs"

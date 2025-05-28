@@ -75,12 +75,12 @@ pub async fn build_with_nix(
 ) -> Result<()> {
     let docker = Docker::connect_with_local_defaults()?;
     let abs_project_path = PathBuf::from(project_path).canonicalize()?;
-    let metadata_dir = abs_project_path.join(".repro-build");
+    let metadata_dir = abs_project_path.join(".repx");
     if !metadata_dir.exists() {
         tokio::fs::create_dir_all(&metadata_dir).await?;
     }
 
-    // Generate .gitignore for the .repro-build directory
+    // Generate .gitignore for the .repx directory
     generate_gitignore(&metadata_dir).await?;
 
     // Initialize logger

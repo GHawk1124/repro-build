@@ -1,17 +1,14 @@
 {
-  description = "Reproducible Rust cross-build for {{ package_name }}";
+  description = "Reproducible Rust cross-build for repx";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
-    {%- for inp in extra_inputs %}
-    {{ inp.name }}.url = {{ inp.url | quote }};
-    {%- endfor %}
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, {%- for inp in extra_inputs %} {{ inp.name }}, {%- endfor %} ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachSystem [
       "x86_64-linux"
       "aarch64-linux"
@@ -68,7 +65,7 @@
               # For windows-gnu, static is handled via RUSTFLAGS, so actualTriple remains x86_64-pc-windows-gnu
               else targetTriple;
 
-            rustBin = pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+            rustBin = pkgs.rust-bin.stable.latest.default.override {
               targets = [ actualTriple ];
             };
 
@@ -135,8 +132,8 @@
             ]);
 
           in targetPkgs.rustPlatform.buildRustPackage rec {
-            pname = "{{ package_name }}";
-            version = "{{ package_version }}";
+            pname = "repx";
+            version = "0.1.0";
             src = pkgs.lib.cleanSourceWith {
               src = ../.;
               filter = path: type:
@@ -183,15 +180,15 @@
               find target -name "*.exe" || echo "No .exe files found"
 
               # Try multiple possible locations
-              if [ -f "target/${actualTriple}/release/{{ package_name }}.exe" ]; then
+              if [ -f "target/${actualTriple}/release/repx.exe" ]; then
                 echo "Found .exe at expected location"
-                cp target/${actualTriple}/release/{{ package_name }}.exe $out/bin/
-              elif [ -f "target/release/{{ package_name }}.exe" ]; then
+                cp target/${actualTriple}/release/repx.exe $out/bin/
+              elif [ -f "target/release/repx.exe" ]; then
                 echo "Found .exe in target/release"
-                cp target/release/{{ package_name }}.exe $out/bin/
+                cp target/release/repx.exe $out/bin/
               else
-                echo "Searching for {{ package_name }}.exe in all locations"
-                find target -name "{{ package_name }}.exe" -exec cp {} $out/bin/ \; || echo "No {{ package_name }}.exe found anywhere"
+                echo "Searching for repx.exe in all locations"
+                find target -name "repx.exe" -exec cp {} $out/bin/ \; || echo "No repx.exe found anywhere"
 
                 echo "Copying any .exe files found as fallback"
                 find target -name "*.exe" -exec cp {} $out/bin/ \; || echo "No .exe files found at all"
@@ -255,8 +252,8 @@
 
             # Windows MSVC builds (uses pkgs.stdenv.mkDerivation directly, not buildFor)
             "x86_64-pc-windows-msvc" = pkgs.stdenv.mkDerivation {
-              pname = "{{ package_name }}-msvc";
-              version = "{{ package_version }}";
+              pname = "repx-msvc";
+              version = "0.1.0";
               src = pkgs.lib.cleanSourceWith {
                 src = ../.;
                 filter = path: type:
@@ -275,7 +272,7 @@
               };
 
               nativeBuildInputs = [
-                (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+                (pkgs.rust-bin.stable.latest.default.override {
                   targets = [ "x86_64-pc-windows-msvc" ];
                 })
                 pkgs.cargo-xwin
@@ -302,7 +299,7 @@
               installPhase = ''
                 mkdir -p $out/bin
                 find target -type f -executable -name "*.exe" || echo "No executables found"
-                cp target/x86_64-pc-windows-msvc/release/{{ package_name }}{,.exe} $out/bin/ || true
+                cp target/x86_64-pc-windows-msvc/release/repx{,.exe} $out/bin/ || true
 
                 # If it's a library, install that instead
                 mkdir -p $out/lib
@@ -340,7 +337,7 @@
         devShells = {
           # Default shell available on all systems
           default = pkgs.mkShell {
-            nativeBuildInputs = [ pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default ];
+            nativeBuildInputs = [ pkgs.rust-bin.stable.latest.default ];
             buildInputs = [ pkgs.openssl pkgs.pkg-config ];
           };
         } // (
@@ -349,7 +346,7 @@
             "aarch64-linux-gnu" = pkgs.mkShell {
               nativeBuildInputs = [
                 (rust-overlay.lib.mkRustBin { }
-                  pkgsCrossAarch64.buildPackages.{{ rust_channel }}.{{ rust_version }}.default.override {
+                  pkgsCrossAarch64.buildPackages.stable.latest.default.override {
                     targets = [ "aarch64-unknown-linux-gnu" ];
                   })
                 pkgs.pkg-config
@@ -364,7 +361,7 @@
 
             "x86_64-linux-musl" = pkgs.mkShell {
               nativeBuildInputs = [
-                (pkgsStatic.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+                (pkgsStatic.rust-bin.stable.latest.default.override {
                   targets = [ "x86_64-unknown-linux-musl" ];
                 })
                 pkgs.pkg-config
@@ -378,7 +375,7 @@
 
             "x86_64-w64-mingw32" = pkgs.mkShell {
               nativeBuildInputs = [
-                (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+                (pkgs.rust-bin.stable.latest.default.override {
                   targets = [ "x86_64-pc-windows-gnu" ];
                 })
                 pkgs.pkg-config
@@ -396,7 +393,7 @@
 
             "x86_64-pc-windows-msvc" = pkgs.mkShell {
               nativeBuildInputs = [
-                (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
+                (pkgs.rust-bin.stable.latest.default.override {
                   targets = [ "x86_64-pc-windows-msvc" ];
                 })
                 pkgs.cargo-xwin

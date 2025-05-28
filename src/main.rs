@@ -1,10 +1,10 @@
 use anyhow::Result;
 use clap::Parser;
-use repro_build_lib::{build_with_nix, ExtraInput, RESET, BOLD, GREEN, RED, YELLOW, CYAN, MAGENTA};
+use repx_lib::{build_with_nix, ExtraInput, RESET, BOLD, GREEN, RED, YELLOW, CYAN, MAGENTA};
 use std::path::Path;
 
 #[derive(Parser)]
-#[command(name = "repro-build", about = "Cargo subcommand for Nix-based Rust builds")]
+#[command(name = "repx", about = "Cargo subcommand for Nix-based Rust builds")]
 enum Cli {
     Build {
         #[arg(short, long, default_value = ".", help = "Path location to your Cargo.toml or project root.")]
@@ -27,12 +27,14 @@ enum Cli {
 // Available targets based on the flake template
 const AVAILABLE_TARGETS: &[&str] = &[
     "x86_64-linux-gnu",
-    "aarch64-linux-gnu", 
+    "aarch64-linux-gnu",
     "x86_64-linux-musl",
     "aarch64-linux-musl",
     "x86_64-w64-mingw32",       // Windows GNU
     "x86_64-pc-windows-msvc", // Windows MSVC
     "aarch64-w64-mingw32",      // Windows ARM GNU (experimental)
+    "x86_64-apple-darwin",      // macOS Intel
+    "aarch64-apple-darwin",     // macOS Apple Silicon
 ];
 
 fn get_host_target() -> &'static str {
@@ -48,10 +50,20 @@ fn get_host_target() -> &'static str {
     {
         "x86_64-w64-mingw32" // Default to GNU for Windows host
     }
+    #[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+    {
+        "x86_64-apple-darwin"
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    {
+        "aarch64-apple-darwin"
+    }
     #[cfg(not(any(
         all(target_arch = "x86_64", target_os = "linux"),
         all(target_arch = "aarch64", target_os = "linux"),
-        all(target_arch = "x86_64", target_os = "windows")
+        all(target_arch = "x86_64", target_os = "windows"),
+        all(target_arch = "x86_64", target_os = "macos"),
+        all(target_arch = "aarch64", target_os = "macos")
     )))]
     {
         "x86_64-linux-gnu"  // Default fallback
@@ -69,6 +81,8 @@ fn print_available_targets() {
             "x86_64-w64-mingw32" => "Windows x86_64 (MinGW-w64/GNU)",
             "x86_64-pc-windows-msvc" => "Windows x86_64 (MSVC toolchain)",
             "aarch64-w64-mingw32" => "Windows ARM64 (MinGW-w64/GNU, experimental)",
+            "x86_64-apple-darwin" => "macOS x86_64 (Intel)",
+            "aarch64-apple-darwin" => "macOS ARM64 (Apple Silicon)",
             _ => "Unknown target",
         };
         println!("   - {}: {}", target, description);
@@ -100,7 +114,7 @@ async fn main() -> Result<()> {
                     Some(ExtraInput { name: name.to_string(), url: url.to_string() })
                 } else { None }
             }).collect();
-            
+
             // Determine targets to build
             let target_string = match targets {
                 Some(t) => t,
@@ -111,7 +125,7 @@ async fn main() -> Result<()> {
                 }
             };
             let t: Vec<&str> = target_string.split(',').collect();
-            
+
             // Validate targets
             for target in &t {
                 if !AVAILABLE_TARGETS.contains(target) {
@@ -119,30 +133,30 @@ async fn main() -> Result<()> {
                     return Err(anyhow::anyhow!("Invalid target: {}", target));
                 }
             }
-            
+
             println!("{}{}Configuration:{}", BOLD, CYAN, RESET);
             println!("   - Project: {}", project);
             println!("   - Docker Image: {}", image);
             println!("   - Rust: {} {}", rust_channel, rust_version);
             println!("   - Targets: {:?}", t);
-            println!("   - Extra inputs: {}", if extra_inputs.is_empty() { "none".to_string() } else { 
-                extra_inputs.iter().map(|i| format!("{}={}", i.name, i.url)).collect::<Vec<_>>().join(", ") 
+            println!("   - Extra inputs: {}", if extra_inputs.is_empty() { "none".to_string() } else {
+                extra_inputs.iter().map(|i| format!("{}={}", i.name, i.url)).collect::<Vec<_>>().join(", ")
             });
-            
+
             println!("\n{}{}Building project with Nix inside Docker...{}", BOLD, MAGENTA, RESET);
-            
+
             let build_result = build_with_nix(&image, &project, &t, extra_inputs, &rust_channel, &rust_version).await;
-            
+
             match build_result {
                 Ok(_) => {
                     println!("\n{}{}Build completed successfully!{}", BOLD, GREEN, RESET);
-                    let target_path = Path::new(&project).join("target/repro-build");
-                    
+                    let target_path = Path::new(&project).join("target/repx");
+
                     if target_path.exists() {
                         println!("{}{}Build artifacts are available in:{}", BOLD, CYAN, RESET);
-                        println!("   - target/repro-build/ directory");
+                        println!("   - target/repx/ directory");
                     } else {
-                        println!("\n{}{}WARNING:{} No build artifacts found in target/repro-build", BOLD, YELLOW, RESET);
+                        println!("\n{}{}WARNING:{} No build artifacts found in target/repx", BOLD, YELLOW, RESET);
                         println!("This could indicate that all builds failed or no artifacts were produced");
                     }
                     Ok(())

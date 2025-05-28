@@ -14,6 +14,8 @@ fn parse_target(target: &str) -> (String, bool, bool) {
         "x86_64-w64-mingw32" => (target.to_string(), false, false),      // Windows GNU
         "x86_64-pc-windows-msvc" => (target.to_string(), true, false), // Windows MSVC
         "aarch64-w64-mingw32" => (target.to_string(), false, false),     // Windows ARM GNU
+        "x86_64-apple-darwin" => (target.to_string(), false, false),     // macOS Intel
+        "aarch64-apple-darwin" => (target.to_string(), false, false),    // macOS Apple Silicon
         _ => (target.to_string(), false, false), // Fallback, though should be caught by main.rs validation
     }
 }
@@ -24,7 +26,7 @@ pub async fn execute_nix_build(
     targets: &[&str],
     logger: &BuildLogger,
 ) -> Result<()> {
-    let create_target_dir = "mkdir -p ./target/repro-build";
+    let create_target_dir = "mkdir -p ./target/repx";
     let output = execute_command(docker, container_id, create_target_dir).await?;
     logger.log_command(create_target_dir, &output).await?;
 
@@ -45,7 +47,7 @@ pub async fn execute_nix_build(
 
         // Run nix build
         let nix_build_cmd = format!(
-            "nix --extra-experimental-features 'nix-command flakes' build {} ./.repro-build#{} --out-link ./result-{}",
+            "nix --extra-experimental-features 'nix-command flakes' build {} ./.repx#{} --out-link ./result-{}",
             sandbox_option, clean_target, clean_target
         );
 
@@ -76,7 +78,7 @@ pub async fn execute_nix_build(
             logger.log_command(&check_output_cmd, &output).await?;
 
             // Create target directory
-            let mkdir_cmd = format!("mkdir -p ./target/repro-build/{}", clean_target);
+            let mkdir_cmd = format!("mkdir -p ./target/repx/{}", clean_target);
             match execute_command(docker, container_id, &mkdir_cmd).await {
                 Ok(output) => {
                     logger.log_command(&mkdir_cmd, &output).await?;
@@ -90,7 +92,7 @@ pub async fn execute_nix_build(
 
             // Copy build artifacts using tar (handles Nix store permissions reliably)
             let copy_cmd = format!(
-                "tar -C ./result-{} -cf - . | tar -C ./target/repro-build/{} -xf -",
+                "tar -C ./result-{} -cf - . | tar -C ./target/repx/{} -xf -",
                 clean_target, clean_target
             );
 
@@ -104,7 +106,7 @@ pub async fn execute_nix_build(
                     logger.log(&format!("Failed to copy build artifacts: {}", e)).await?;
 
                     // Fallback: try simple cp as last resort
-                    let fallback_cmd = format!("cp -r ./result-{}/. ./target/repro-build/{}/", clean_target, clean_target);
+                    let fallback_cmd = format!("cp -r ./result-{}/. ./target/repx/{}/", clean_target, clean_target);
                     match execute_command(docker, container_id, &fallback_cmd).await {
                         Ok(fallback_output) => {
                             logger.log_command(&fallback_cmd, &fallback_output).await?;
