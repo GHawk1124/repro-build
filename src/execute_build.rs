@@ -61,7 +61,7 @@ pub async fn execute_nix_build(
                 logger.log(&format!("Build failed for target {}: {}", clean_target, e)).await?;
 
                 // Try to get more information about the build failure
-                if let Ok(flake_content) = execute_command(docker, container_id, "cat .repro-build/flake.nix").await {
+                if let Ok(flake_content) = execute_command(docker, container_id, "cat .repx/flake.nix").await {
                     logger.log("Flake content for debugging:").await?;
                     logger.log(&flake_content).await?;
                 }

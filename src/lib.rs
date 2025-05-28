@@ -47,7 +47,7 @@ pub struct ExtraInput {
     pub url: String,
 }
 
-/// Generate a .gitignore file for the .repro-build directory
+/// Generate a .gitignore file for the .repx directory
 async fn generate_gitignore(metadata_dir: &Path) -> Result<()> {
     let gitignore_path = metadata_dir.join(".gitignore");
 

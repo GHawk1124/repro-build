@@ -76,7 +76,7 @@ pub async fn setup_container(
         ..Default::default()
     };
     let timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    let container_name = format!("repro-build-{}", timestamp);
+    let container_name = format!("repx-{}", timestamp);
     let options = CreateContainerOptions::<String> { 
         name: container_name.clone(),
         platform: None,

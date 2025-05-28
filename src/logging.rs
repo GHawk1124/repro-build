@@ -37,7 +37,7 @@ impl BuildLogger {
             .as_secs();
         
         let header = format!(
-            "=== Repro-Build Log ===\n\
+            "=== repx Log ===\n\
              Build ID: {}\n\
              Timestamp: {}\n\
              =====================\n\n",
