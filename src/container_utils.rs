@@ -1,11 +1,17 @@
 use anyhow::Result;
-use bollard::{Docker, models::{ContainerCreateBody, HostConfig}, query_parameters::{CreateContainerOptions, CreateImageOptions, RemoveContainerOptions, StartContainerOptions}};
+use bollard::{
+    models::{ContainerCreateBody, HostConfig},
+    query_parameters::{
+        CreateContainerOptions, CreateImageOptions, RemoveContainerOptions, StartContainerOptions,
+    },
+    Docker,
+};
 use futures_util::stream::TryStreamExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // Import color constants from lib.rs
-use crate::{RESET, BOLD, GREEN, BLUE, CYAN};
+use crate::{BLUE, BOLD, CYAN, GREEN, RESET};
 
 /// Convert a Windows path to a Docker-compatible format
 fn windows_path_to_docker(path: &Path) -> String {
@@ -50,19 +56,25 @@ pub async fn setup_container(
     project_path: &Path,
     metadata_dir: &Path,
 ) -> Result<ContainerInfo> {
-    println!("{}{}Ensuring Nix image is available:{} {}", BOLD, BLUE, RESET, nix_image);
-    docker.create_image(
-        Some(CreateImageOptions {
-            from_image: Some(nix_image.to_string()),
-            ..Default::default()
-        }),
-        None,
-        None,
-    ).try_collect::<Vec<_>>().await?;
+    println!(
+        "{}{}Ensuring Nix image is available:{} {}",
+        BOLD, BLUE, RESET, nix_image
+    );
+    docker
+        .create_image(
+            Some(CreateImageOptions {
+                from_image: Some(nix_image.to_string()),
+                ..Default::default()
+            }),
+            None,
+            None,
+        )
+        .try_collect::<Vec<_>>()
+        .await?;
     let host_cfg = HostConfig {
         binds: Some(vec![
-            format!("{}:/app:rw", windows_path_to_docker(project_path)),  // Mount project as read-write
-            format!("{}:/flake-dir:rw", windows_path_to_docker(metadata_dir)),  // Mount metadata dir as writable
+            format!("{}:/app:rw", windows_path_to_docker(project_path)), // Mount project as read-write
+            format!("{}:/flake-dir:rw", windows_path_to_docker(metadata_dir)), // Mount metadata dir as writable
         ]),
         privileged: Some(true),
         ..Default::default()
@@ -70,7 +82,7 @@ pub async fn setup_container(
     let container_config = ContainerCreateBody {
         image: Some(nix_image.to_string()),
         cmd: Some(vec!["sleep".to_string(), "3600".to_string()]), // Keep container running
-        working_dir: Some("/app".to_string()),  // Set working directory to /app
+        working_dir: Some("/app".to_string()),                    // Set working directory to /app
         host_config: Some(host_cfg),
         ..Default::default()
     };
@@ -81,9 +93,16 @@ pub async fn setup_container(
         platform: String::new(),
     };
     println!("{}{}Starting Nix container...{}", BOLD, BLUE, RESET);
-    let container = docker.create_container(Some(options), container_config).await?;
-    docker.start_container(&container.id, None::<StartContainerOptions>).await?;
-    println!("{}{}Container started:{} {}", BOLD, GREEN, RESET, container_name);
+    let container = docker
+        .create_container(Some(options), container_config)
+        .await?;
+    docker
+        .start_container(&container.id, None::<StartContainerOptions>)
+        .await?;
+    println!(
+        "{}{}Container started:{} {}",
+        BOLD, GREEN, RESET, container_name
+    );
     Ok(ContainerInfo {
         id: container.id,
         name: container_name,
@@ -93,10 +112,15 @@ pub async fn setup_container(
 /// Clean up a Docker container
 pub async fn cleanup_container(docker: &Docker, container_id: &str) -> Result<()> {
     println!("{}{}Cleaning up container...{}", BOLD, CYAN, RESET);
-    docker.remove_container(container_id, Some(RemoveContainerOptions {
-        force: true,
-        ..Default::default()
-    })).await?;
+    docker
+        .remove_container(
+            container_id,
+            Some(RemoveContainerOptions {
+                force: true,
+                ..Default::default()
+            }),
+        )
+        .await?;
     println!("{}{}Container removed successfully{}", BOLD, GREEN, RESET);
     Ok(())
 }

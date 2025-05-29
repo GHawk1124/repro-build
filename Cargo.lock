@@ -1320,6 +1320,7 @@ dependencies = [
  "tempfile",
  "tera",
  "tokio",
+ "toml",
  "uuid",
 ]
 

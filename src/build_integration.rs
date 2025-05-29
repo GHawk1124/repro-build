@@ -28,8 +28,8 @@ pub async fn run_build() -> Result<()> {
     let rust_version = env::var("REPRO_BUILD_RUST_VERSION").unwrap_or_else(|_| "latest".to_string());
     let nixpkgs_url = env::var("REPRO_BUILD_NIXPKGS_URL").unwrap_or_else(|_| "github:NixOS/nixpkgs/nixos-unstable".to_string());
 
-    // Parse extra inputs from environment variables
-    let extra_inputs = parse_extra_inputs_from_env();
+    // Parse extra packages from environment variables
+    let extra_packages = parse_extra_packages_from_env();
 
     // Parse targets into a vector
     let targets_vec: Vec<&str> = targets.split(',').collect();
@@ -45,7 +45,7 @@ pub async fn run_build() -> Result<()> {
         &nix_image,
         &cargo_manifest_dir,
         &targets_vec,
-        extra_inputs,
+        extra_packages,
         &rust_channel,
         &rust_version,
         &nixpkgs_url,
@@ -75,20 +75,32 @@ pub async fn run_build() -> Result<()> {
     }
 }
 
-/// Parse extra inputs from environment variables
-/// Format: REPRO_BUILD_EXTRA_INPUT_name=url
-fn parse_extra_inputs_from_env() -> Vec<crate::ExtraInput> {
-    let mut extra_inputs = Vec::new();
+/// Parse extra packages from environment variables
+/// Format: REPRO_BUILD_EXTRA_PACKAGE_1=openssl, REPRO_BUILD_EXTRA_PACKAGE_2=pkg-config, etc.
+/// Or: REPRO_BUILD_EXTRA_PACKAGES=openssl,pkg-config,curl
+fn parse_extra_packages_from_env() -> Vec<String> {
+    let mut extra_packages = Vec::new();
 
+    // First try the comma-separated list format
+    if let Ok(packages_str) = env::var("REPRO_BUILD_EXTRA_PACKAGES") {
+        extra_packages.extend(
+            packages_str.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        );
+    }
+
+    // Then try individual package environment variables
     for (key, value) in env::vars() {
-        if key.starts_with("REPRO_BUILD_EXTRA_INPUT_") {
-            let name = key.trim_start_matches("REPRO_BUILD_EXTRA_INPUT_").to_string();
-            let url = value;
-            extra_inputs.push(crate::ExtraInput { name, url });
+        if key.starts_with("REPRO_BUILD_EXTRA_PACKAGE_") {
+            let package = value.trim().to_string();
+            if !package.is_empty() {
+                extra_packages.push(package);
+            }
         }
     }
 
-    extra_inputs
+    extra_packages
 }
 
 /// Copy build artifacts to OUT_DIR

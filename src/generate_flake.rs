@@ -2,7 +2,6 @@ use std::path::Path;
 use cargo_metadata::MetadataCommand;
 use anyhow::Result;
 use tera::Tera;
-use crate::ExtraInput;
 use crate::FLAKE_TEMPLATE;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
@@ -11,7 +10,7 @@ use tera::Context;
 /// Generate a flake.nix file for the Rust project
 pub async fn generate_flake_file(
     flake_path: &Path,
-    extra_inputs: &[ExtraInput],
+    extra_packages: &[String],
     rust_channel: &str,
     rust_version: &str,
     nixpkgs_url: &str,
@@ -28,11 +27,10 @@ pub async fn generate_flake_file(
     let mut context = Context::new();
     context.insert("package_name", &package.name);
     context.insert("package_version", &package.version.to_string());
-    context.insert("extra_inputs", &extra_inputs);
+    context.insert("extra_packages", &extra_packages);
     context.insert("rust_channel", rust_channel);
     context.insert("rust_version", rust_version);
     context.insert("nixpkgs_url", nixpkgs_url);
-    context.insert("musl_version", "");
 
     let rendered = tera.render("flake.nix", &context)?;
 
@@ -54,13 +52,13 @@ mod tests {
     fn test_flake_generation_without_musl_override() {
         // Test that flake generation works without musl version override
         let temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let extra_inputs = vec![];
+        let extra_packages = vec![];
         
         let rt = tokio::runtime::Runtime::new().unwrap();
         let content = rt.block_on(async {
             generate_flake_file(
                 temp_file.path(),
-                &extra_inputs,
+                &extra_packages,
                 "stable",
                 "latest",
                 "github:NixOS/nixpkgs/nixos-unstable",

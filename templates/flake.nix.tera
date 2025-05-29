@@ -6,12 +6,9 @@
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
-    {%- for inp in extra_inputs %}
-    {{ inp.name }}.url = {{ inp.url | quote }};
-    {%- endfor %}
   };
 
-  outputs = { self, nixpkgs, rust-overlay, flake-utils, {%- for inp in extra_inputs %} {{ inp.name }}, {%- endfor %} ... }:
+  outputs = { self, nixpkgs, rust-overlay, flake-utils, ... }:
     flake-utils.lib.eachSystem [
       "x86_64-linux"
       "aarch64-linux"
@@ -43,6 +40,21 @@
           crossSystem = { config = "aarch64-unknown-linux-musl"; };
         };
 
+        # Helper function to get packages from the extra_packages list
+        getExtraPackages = targetPkgs: 
+          let
+            # Extra packages specified by the user
+            extraPackageNames = [{% for pkg in extra_packages %} "{{ pkg }}"{% endfor %}];
+            
+            # Function to safely get a package, returning null if it doesn't exist
+            safeGetPackage = name: 
+              if lib.hasAttr name targetPkgs then
+                lib.getAttr name targetPkgs
+              else
+                builtins.trace "Warning: Package '${name}' not found in nixpkgs, skipping..." null;
+          in
+            builtins.filter (pkg: pkg != null) (map safeGetPackage extraPackageNames);
+
         # Generic builder for GNU / Musl / MinGW
         buildFor = { targetSystem, targetTriple, needsWine ? false
           , staticBuild ? false }:
@@ -58,8 +70,8 @@
             targetPkgs = # This section determines the Nix package set based on the Rust targetTriple and staticBuild
               if staticBuild && targetTriple == "x86_64-unknown-linux-gnu" then pkgsStatic # x86_64-linux-musl
               else if staticBuild && targetTriple == "aarch64-unknown-linux-gnu" then pkgsAarch64Static # aarch64-linux-musl
-              else if targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindows # x86_64-w64-mingw32 (dynamic, static is handled by pkgsCrossWindowsStatic in RUSTFLAGS)
-              else if targetTriple == "aarch64-pc-windows-gnu" then pkgs.pkgsCross.aarch64-multiplatform-windows # Placeholder, assuming a similar structure for ARM windows
+              else if targetTriple == "x86_64-pc-windows-gnu" then pkgsCrossWindows # x86_64-w64-mingw32
+              else if targetTriple == "aarch64-pc-windows-gnu" then pkgs.pkgsCross.aarch64-multiplatform-windows # Placeholder
               else pkgs; # for x86_64-linux-gnu, aarch64-linux-gnu
 
             actualTriple = # This is the Rust triple used by rust-bin and CARGO_BUILD_TARGET
@@ -72,30 +84,16 @@
               targets = [ actualTriple ];
             };
 
-            opensslLib = if staticBuild then
-              targetPkgs.openssl.override { static = true; }
-            else
-              pkgs.openssl;
+            # Get extra packages for this target
+            extraPackages = getExtraPackages targetPkgs;
 
-            windowsLibs = if targetTriple == "x86_64-pc-windows-gnu" then [
-              pkgsCrossWindows.windows.pthreads
-              pkgsCrossWindows.openssl
-              # Add zlib which is often needed
-              pkgsCrossWindows.zlib
-            ] else
-              [ ];
-
-            # Improve Windows build configuration
-            buildInputs = (if targetTriple == "x86_64-pc-windows-gnu" then
-              windowsLibs
-            else
-              [ opensslLib ]);
-            nativeBuildInputs = [ pkgs.pkg-config ]
-              ++ (if needsWine then [ pkgs.wine ] else [ ])
-              ++ (if targetTriple == "aarch64-unknown-linux-gnu" then
-                [ pkgs.qemu ]
-              else
-                [ ]);
+            # Build inputs are only the packages specified by the user
+            buildInputs = extraPackages;
+            
+            # Native build inputs include only essential tools and user-specified packages
+            nativeBuildInputs = 
+              (if needsWine then [ pkgs.wine ] else [ ])
+              ++ (if targetTriple == "aarch64-unknown-linux-gnu" then [ pkgs.qemu ] else [ ]);
 
             rustFlags =
               if staticBuild && (actualTriple == "x86_64-unknown-linux-musl" || actualTriple == "aarch64-unknown-linux-musl") then "-C target-feature=+crt-static"
@@ -282,9 +280,7 @@
                 pkgs.clang
                 pkgs.llvmPackages.lld
                 pkgs.wine
-                pkgs.pkg-config
-                pkgs.openssl
-              ];
+              ] ++ (getExtraPackages pkgs);
 
               buildPhase = ''
                 export CARGO_HOME=$PWD/.cargo
@@ -341,7 +337,7 @@
           # Default shell available on all systems
           default = pkgs.mkShell {
             nativeBuildInputs = [ pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default ];
-            buildInputs = [ pkgs.openssl pkgs.pkg-config ];
+            buildInputs = getExtraPackages pkgs;
           };
         } // (
           # Linux systems get cross-compilation dev shells
@@ -352,10 +348,9 @@
                   pkgsCrossAarch64.buildPackages.{{ rust_channel }}.{{ rust_version }}.default.override {
                     targets = [ "aarch64-unknown-linux-gnu" ];
                   })
-                pkgs.pkg-config
                 pkgs.qemu
               ];
-              buildInputs = [ pkgs.openssl ];
+              buildInputs = getExtraPackages pkgs;
               shellHook = ''
                 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=${pkgsCrossAarch64.stdenv.cc.targetPrefix}cc
                 export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER=qemu-aarch64
@@ -367,9 +362,8 @@
                 (pkgsStatic.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
                   targets = [ "x86_64-unknown-linux-musl" ];
                 })
-                pkgs.pkg-config
               ];
-              buildInputs = [ (pkgsStatic.openssl.override { static = true; }) ];
+              buildInputs = getExtraPackages pkgsStatic;
               shellHook = ''
                 export RUSTFLAGS="-C target-feature=+crt-static"
                 export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=${pkgsStatic.stdenv.cc.targetPrefix}cc
@@ -381,13 +375,9 @@
                 (pkgs.rust-bin.{{ rust_channel }}.{{ rust_version }}.default.override {
                   targets = [ "x86_64-pc-windows-gnu" ];
                 })
-                pkgs.pkg-config
                 pkgs.wine
               ];
-              buildInputs = [
-                pkgsCrossWindowsStatic.windows.pthreads
-                pkgsCrossWindowsStatic.openssl
-              ];
+              buildInputs = getExtraPackages pkgsCrossWindowsStatic;
               shellHook = ''
                 export RUSTFLAGS="-C target-feature=+crt-static -C linker=x86_64-w64-mingw32-gcc -C link-args=-static"
                 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=${pkgsCrossWindowsStatic.stdenv.cc.targetPrefix}gcc
@@ -403,8 +393,7 @@
                 pkgs.clang
                 pkgs.llvmPackages.lld
                 pkgs.wine
-                pkgs.pkg-config
-              ];
+              ] ++ (getExtraPackages pkgs);
               shellHook = ''
                 export XWIN_ACCEPT_LICENSE=yes
                 export XWIN_CACHE_DIR=$PWD/.cache/xwin

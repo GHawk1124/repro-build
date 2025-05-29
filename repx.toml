@@ -1,0 +1,7 @@
+project = "."
+image = "nixos/nix:latest"
+runtime = "docker"
+extra = []
+rust_channel = "stable"
+rust_version = "latest"
+nixpkgs_url = "github:NixOS/nixpkgs/nixos-unstable"

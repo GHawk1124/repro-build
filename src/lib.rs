@@ -11,6 +11,8 @@ mod execute_build;
 mod container_utils;
 mod build_integration;
 mod logging;
+mod config;
+mod file_comparison;
 
 pub mod build_script {
     //! This module provides integration for build.rs scripts.
@@ -21,12 +23,14 @@ pub mod build_script {
 }
 
 pub use logging::BuildLogger;
+pub use config::RepxConfig;
 
 use generate_flake::generate_flake_file;
 use generate_lock::generate_flake_lock;
 use execute_build::execute_nix_build;
 use container_utils::{setup_container, cleanup_container};
 use execute_command::execute_command;
+use file_comparison::{check_flake_changes, check_lock_changes};
 
 pub const FLAKE_TEMPLATE: &'static str = include_str!("../templates/flake.nix.tera");
 
@@ -69,7 +73,7 @@ pub async fn build_with_nix(
     nix_image: &str,
     project_path: &str,
     targets: &[&str],
-    extra_inputs: Vec<ExtraInput>,
+    extra_packages: Vec<String>,
     rust_channel: &str,
     rust_version: &str,
     nixpkgs_url: &str,
@@ -100,16 +104,23 @@ pub async fn build_with_nix(
 
     logger.log_build_config(&config).await?;
 
-    // Create flake.nix if it doesn't exist
+    // Always generate flake.nix and compare with existing one
     let flake_path = metadata_dir.join("flake.nix");
-    let flake_exists = tokio::fs::metadata(&flake_path).await.is_ok();
-    if !flake_exists {
-        logger.log("Generating flake.nix file").await?;
-        generate_flake_file(&flake_path, &extra_inputs, rust_channel, rust_version, nixpkgs_url).await?;
-        println!("{}{}Generated flake.nix in {}{}", BOLD, GREEN, flake_path.display(), RESET);
-        logger.log(&format!("Generated flake.nix in {}", flake_path.display())).await?;
+    let temp_flake_path = metadata_dir.join("flake.nix.new");
+    
+    logger.log("Generating flake.nix file").await?;
+    let generated_content = generate_flake_file(&temp_flake_path, &extra_packages, rust_channel, rust_version, nixpkgs_url).await?;
+    
+    // Compare with existing flake.nix and warn if different
+    check_flake_changes(&temp_flake_path, &flake_path, &generated_content).await?;
+    
+    // If no existing flake.nix or it's different, use the generated one
+    if !flake_path.exists() || tokio::fs::read_to_string(&flake_path).await?.replace("\r\n", "\n").replace("\r", "\n") != generated_content.replace("\r\n", "\n").replace("\r", "\n") {
+        tokio::fs::rename(&temp_flake_path, &flake_path).await?;
+        logger.log(&format!("Updated flake.nix at {}", flake_path.display())).await?;
     } else {
-        println!("{}{}Using existing flake.nix at {}{}", BOLD, BLUE, flake_path.display(), RESET);
+        // Remove temp file if not needed
+        let _ = tokio::fs::remove_file(&temp_flake_path).await;
         logger.log(&format!("Using existing flake.nix at {}", flake_path.display())).await?;
     }
 
@@ -144,18 +155,28 @@ pub async fn build_with_nix(
         logger.log_command(cmd, &output).await?;
     }
 
-    // Generate flake.lock if needed
+    // Always generate flake.lock and compare with existing one
     let flake_lock_path = metadata_dir.join("flake.lock");
-    let lock_exists = tokio::fs::metadata(&flake_lock_path).await.is_ok();
-    if !lock_exists {
-        logger.log("Generating flake.lock file").await?;
-        let output = generate_flake_lock(&docker, &container.id).await?;
-        logger.log_command("nix flake lock", &output).await?;
-        println!("{}{}Generated flake.lock{}", BOLD, GREEN, RESET);
-    } else {
-        println!("{}{}Using existing flake.lock{}", BOLD, BLUE, RESET);
-        logger.log("Using existing flake.lock").await?;
+    let temp_lock_path = metadata_dir.join("flake.lock.new");
+    
+    logger.log("Generating flake.lock file").await?;
+    
+    // Copy existing lock to temp location for comparison if it exists
+    if flake_lock_path.exists() {
+        tokio::fs::copy(&flake_lock_path, &temp_lock_path).await?;
     }
+    
+    let output = generate_flake_lock(&docker, &container.id).await?;
+    logger.log_command("nix flake lock", &output).await?;
+    
+    // Check if the lock file changed and warn if so
+    if flake_lock_path.exists() && temp_lock_path.exists() {
+        check_lock_changes(&temp_lock_path, &flake_lock_path).await?;
+        // Clean up temp lock file
+        let _ = tokio::fs::remove_file(&temp_lock_path).await;
+    }
+    
+    println!("{}{}Generated/updated flake.lock{}", BOLD, GREEN, RESET);
 
     // Execute the Nix build
     logger.log(&format!("Starting build for targets: {}", targets.join(", "))).await?;
