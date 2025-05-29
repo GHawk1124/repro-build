@@ -26,6 +26,7 @@ pub async fn run_build() -> Result<()> {
     let targets = env::var("REPRO_BUILD_TARGETS").unwrap_or_else(|_| "x86_64-linux-gnu".to_string());
     let rust_channel = env::var("REPRO_BUILD_RUST_CHANNEL").unwrap_or_else(|_| "stable".to_string());
     let rust_version = env::var("REPRO_BUILD_RUST_VERSION").unwrap_or_else(|_| "latest".to_string());
+    let nixpkgs_url = env::var("REPRO_BUILD_NIXPKGS_URL").unwrap_or_else(|_| "github:NixOS/nixpkgs/nixos-unstable".to_string());
 
     // Parse extra inputs from environment variables
     let extra_inputs = parse_extra_inputs_from_env();
@@ -46,7 +47,8 @@ pub async fn run_build() -> Result<()> {
         &targets_vec,
         extra_inputs,
         &rust_channel,
-        &rust_version
+        &rust_version,
+        &nixpkgs_url,
     ).await;
 
     // Handle the result

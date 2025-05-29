@@ -6,7 +6,7 @@ Repx is a tool designed to provide bit-for-bit reproducible builds for Rust soft
 
 - Precise Docker image version for Nix
 - Exact Rust toolchain version
-- Specific system library versions (glibc, musl)
+- Specific system library versions (musl)
 - Defined compiler flags and linking options
 - Controlled dependency resolution
 

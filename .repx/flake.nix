@@ -145,7 +145,7 @@
                     pkgs.lib.hasSuffix ".toml" baseName ||
                     pkgs.lib.hasSuffix ".lock" baseName ||
                     pkgs.lib.hasSuffix ".md" baseName ||
-                    pkgs.lib.hasSuffix ".hbs" baseName ||
+                    pkgs.lib.hasSuffix ".tera" baseName ||
                     baseName == "LICENSE" ||
                     baseName == ".gitignore"
                   ));
@@ -265,7 +265,7 @@
                       pkgs.lib.hasSuffix ".toml" baseName ||
                       pkgs.lib.hasSuffix ".lock" baseName ||
                       pkgs.lib.hasSuffix ".md" baseName ||
-                      pkgs.lib.hasSuffix ".hbs" baseName ||
+                      pkgs.lib.hasSuffix ".tera" baseName ||
                       baseName == "LICENSE" ||
                       baseName == ".gitignore"
                     ));

@@ -2,7 +2,7 @@
   description = "Reproducible Rust cross-build for {{ package_name }}";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url = "{{ nixpkgs_url }}";
     rust-overlay.url = "github:oxalica/rust-overlay";
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url = "github:numtide/flake-utils";
@@ -148,7 +148,7 @@
                     pkgs.lib.hasSuffix ".toml" baseName ||
                     pkgs.lib.hasSuffix ".lock" baseName ||
                     pkgs.lib.hasSuffix ".md" baseName ||
-                    pkgs.lib.hasSuffix ".hbs" baseName ||
+                    pkgs.lib.hasSuffix ".tera" baseName ||
                     baseName == "LICENSE" ||
                     baseName == ".gitignore"
                   ));
@@ -268,7 +268,7 @@
                       pkgs.lib.hasSuffix ".toml" baseName ||
                       pkgs.lib.hasSuffix ".lock" baseName ||
                       pkgs.lib.hasSuffix ".md" baseName ||
-                      pkgs.lib.hasSuffix ".hbs" baseName ||
+                      pkgs.lib.hasSuffix ".tera" baseName ||
                       baseName == "LICENSE" ||
                       baseName == ".gitignore"
                     ));

@@ -22,6 +22,8 @@ enum Cli {
         rust_channel: String,
         #[arg(long, default_value = "latest", help = "Rust version, e.g. '1.75.0' or 'latest'")]
         rust_version: String,
+        #[arg(long, default_value = "github:NixOS/nixpkgs/nixos-unstable", help = "nixpkgs URL/commit to use for reproducible builds")]
+        nixpkgs_url: String,
     },
     #[command(about = "Print the repx version")]
     Release,
@@ -108,7 +110,7 @@ fn print_version() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse() {
-        Cli::Build { project, image, targets, list_targets, extra, rust_channel, rust_version } => {
+        Cli::Build { project, image, targets, list_targets, extra, rust_channel, rust_version, nixpkgs_url } => {
             if list_targets {
                 print_available_targets();
                 return Ok(());
@@ -154,6 +156,7 @@ async fn main() -> Result<()> {
             println!("   - Project: {}", project);
             println!("   - Docker Image: {}", image);
             println!("   - Rust: {} {}", rust_channel, rust_version);
+            println!("   - nixpkgs: {}", nixpkgs_url);
             println!("   - Targets: {:?}", t);
             println!("   - Extra inputs: {}", if extra_inputs.is_empty() { "none".to_string() } else {
                 extra_inputs.iter().map(|i| format!("{}={}", i.name, i.url)).collect::<Vec<_>>().join(", ")
@@ -161,7 +164,7 @@ async fn main() -> Result<()> {
 
             println!("\n{}{}Building project with Nix inside Docker...{}", BOLD, MAGENTA, RESET);
 
-            let build_result = build_with_nix(&image, &project, &t, extra_inputs, &rust_channel, &rust_version).await;
+            let build_result = build_with_nix(&image, &project, &t, extra_inputs, &rust_channel, &rust_version, &nixpkgs_url).await;
 
             match build_result {
                 Ok(_) => {

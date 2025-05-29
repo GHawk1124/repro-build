@@ -14,6 +14,7 @@ pub async fn generate_flake_file(
     extra_inputs: &[ExtraInput],
     rust_channel: &str,
     rust_version: &str,
+    nixpkgs_url: &str,
 ) -> Result<String> {
     let metadata = MetadataCommand::new().exec()?;
     let package = metadata.packages
@@ -30,6 +31,8 @@ pub async fn generate_flake_file(
     context.insert("extra_inputs", &extra_inputs);
     context.insert("rust_channel", rust_channel);
     context.insert("rust_version", rust_version);
+    context.insert("nixpkgs_url", nixpkgs_url);
+    context.insert("musl_version", "");
 
     let rendered = tera.render("flake.nix", &context)?;
 
@@ -40,4 +43,34 @@ pub async fn generate_flake_file(
     file.write_all(normalized_content.as_bytes()).await?;
 
     Ok(normalized_content)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_flake_generation_without_musl_override() {
+        // Test that flake generation works without musl version override
+        let temp_file = NamedTempFile::new().expect("Failed to create temp file");
+        let extra_inputs = vec![];
+        
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let content = rt.block_on(async {
+            generate_flake_file(
+                temp_file.path(),
+                &extra_inputs,
+                "stable",
+                "latest",
+                "github:NixOS/nixpkgs/nixos-unstable",
+            ).await.unwrap()
+        });
+
+        // Check that no musl overlay is included
+        assert!(!content.contains("musl = prev.musl.overrideAttrs"));
+        // But musl targets should still be supported
+        assert!(content.contains("x86_64-linux-musl"));
+        assert!(content.contains("aarch64-linux-musl"));
+    }
 }

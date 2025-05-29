@@ -28,7 +28,7 @@ use execute_build::execute_nix_build;
 use container_utils::{setup_container, cleanup_container};
 use execute_command::execute_command;
 
-pub const FLAKE_TEMPLATE: &'static str = include_str!("../templates/flake.nix.hbs");
+pub const FLAKE_TEMPLATE: &'static str = include_str!("../templates/flake.nix.tera");
 
 // ANSI color codes for terminal output
 pub const RESET: &str = "\x1b[0m";
@@ -72,6 +72,7 @@ pub async fn build_with_nix(
     extra_inputs: Vec<ExtraInput>,
     rust_channel: &str,
     rust_version: &str,
+    nixpkgs_url: &str,
 ) -> Result<()> {
     let docker = Docker::connect_with_local_defaults()?;
     let abs_project_path = PathBuf::from(project_path).canonicalize()?;
@@ -94,6 +95,7 @@ pub async fn build_with_nix(
     config.insert("Targets".to_string(), targets.join(", "));
     config.insert("Rust Channel".to_string(), rust_channel.to_string());
     config.insert("Rust Version".to_string(), rust_version.to_string());
+    config.insert("nixpkgs URL".to_string(), nixpkgs_url.to_string());
     config.insert("Build ID".to_string(), logger.build_id().to_string());
 
     logger.log_build_config(&config).await?;
@@ -103,7 +105,7 @@ pub async fn build_with_nix(
     let flake_exists = tokio::fs::metadata(&flake_path).await.is_ok();
     if !flake_exists {
         logger.log("Generating flake.nix file").await?;
-        generate_flake_file(&flake_path, &extra_inputs, rust_channel, rust_version).await?;
+        generate_flake_file(&flake_path, &extra_inputs, rust_channel, rust_version, nixpkgs_url).await?;
         println!("{}{}Generated flake.nix in {}{}", BOLD, GREEN, flake_path.display(), RESET);
         logger.log(&format!("Generated flake.nix in {}", flake_path.display())).await?;
     } else {
